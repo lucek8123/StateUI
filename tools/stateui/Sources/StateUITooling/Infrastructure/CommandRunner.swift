@@ -54,6 +54,7 @@ extension String {
     public var url: URL { URL(fileURLWithPath: self) }
 }
 
+/// A native tool that exited non-zero, with its captured output.
 public struct ProcessFailure: Error, Sendable, CustomStringConvertible {
     public let label: String
     public let exitCode: Int32

@@ -23,22 +23,12 @@ returning a placeholder success.
 
 Every host needs a swift.org Swift 6.4 or newer; `lldb-dap` backs debugging for
 the native hosts; Git is what lists and clones release branches; Node 20 is what
-the editor and Web test builds use. `stateui doctor --json` names each component,
-which hosts need it, whether its absence blocks the host, and what to install.
+Web test builds use. `stateui doctor --json` names each component, which hosts
+need it, whether its absence blocks the host, and what to install.
 
-## What this Linux machine actually runs
-
-`stateui hosts --json` on the checkout here reports:
-
-* `gtk`: ready - the probe passed, so a GTK head can be built and run here;
-* `web`: ready - a Swift SDK for WebAssembly matching the toolchain's release
-  (`swift-6.4.2-RELEASE_wasm`) is installed, so Web builds compile and serve here. It
-  reported `toolchain-missing` earlier in this work, before that SDK was installed;
-* `android`: `toolchain-missing` - no SDK, NDK, JDK or matching Swift SDK;
-* `appkit`, `uikit`, `winui`: `unsupported-os`.
-
-"ready" means the toolchain probe passed. It is not a claim that every
-application builds, runs, tests or deploys.
+`stateui hosts --json` reports what the current machine can do now. `ready`
+means the toolchain probe passed; it is not a claim that every application
+builds, runs, tests or deploys.
 
 ## WinUI limitation
 
@@ -60,4 +50,4 @@ operation.
 
 Preparation writes the facts a plan cannot name - the pid, the simulator or
 device serial, the served URL and port - into `debugger.json` under the host's
-build directory, where both editors read them after `debug/prepare` finishes.
+build directory, where a client reads them after `debug/prepare` finishes.

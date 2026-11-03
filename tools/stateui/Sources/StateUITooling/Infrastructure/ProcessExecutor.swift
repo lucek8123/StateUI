@@ -9,6 +9,7 @@ import Glibc
 import Darwin
 #endif
 
+/// One chunk of a running process's output.
 public struct ProcessOutput: Sendable {
     public enum Stream: String, Sendable {
         case stdout
@@ -24,6 +25,7 @@ public struct ProcessOutput: Sendable {
     }
 }
 
+/// What a finished process exited with, printed and how long it took.
 public struct ProcessResult: Sendable {
     public let exitCode: Int32
     public let standardOutput: String
@@ -40,6 +42,7 @@ public struct ProcessResult: Sendable {
     public var succeeded: Bool { exitCode == 0 }
 }
 
+/// Runs a planned process and reports its output as it arrives.
 public protocol ProcessExecuting: Sendable {
     func execute(
         _ invocation: ProcessInvocation,
@@ -144,6 +147,7 @@ private final class RunningProcess: @unchecked Sendable {
     }
 }
 
+/// Runs processes on this machine.
 public struct RealProcessExecutor: ProcessExecuting {
     public init() {}
 

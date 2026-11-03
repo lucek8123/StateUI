@@ -99,6 +99,7 @@ public struct StateUIConfiguration: Codable, Sendable, Equatable {
     }
 }
 
+/// Where a checkout keeps its shared and local configuration files.
 public struct ConfigurationPaths: Codable, Sendable, Hashable {
     public let shared: URL
     public let local: URL

@@ -3,6 +3,7 @@
 
 import Foundation
 
+/// A JSON-RPC request identifier: a number or a string.
 public enum RPCID: Codable, Sendable, Hashable, CustomStringConvertible {
     case int(Int)
     case string(String)
@@ -32,6 +33,7 @@ public enum RPCID: Codable, Sendable, Hashable, CustomStringConvertible {
     }
 }
 
+/// One JSON-RPC request or notification.
 public struct RPCRequest: Decodable, Sendable {
     public let jsonrpc: String
     public let id: RPCID?
@@ -53,6 +55,7 @@ public struct RPCRequest: Decodable, Sendable {
     public var isNotification: Bool { id == nil }
 }
 
+/// A JSON-RPC error, with the standard codes and StateUI's tooling error.
 public struct RPCErrorObject: Codable, Sendable, Hashable {
     public let code: Int
     public let message: String
@@ -79,6 +82,7 @@ public struct RPCErrorObject: Codable, Sendable, Hashable {
     }
 }
 
+/// One JSON-RPC response.
 public struct RPCResponse: Encodable, Sendable {
     public let jsonrpc: String
     public let id: RPCID?
@@ -97,6 +101,7 @@ public struct RPCResponse: Encodable, Sendable {
     }
 }
 
+/// One JSON-RPC notification.
 public struct RPCNotification: Encodable, Sendable {
     public let jsonrpc = "2.0"
     public let method: String

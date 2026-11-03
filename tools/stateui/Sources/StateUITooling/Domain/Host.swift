@@ -124,6 +124,7 @@ public struct HostTarget: Codable, Sendable, Hashable {
     }
 }
 
+/// A platform an application can be developed or deployed on.
 public enum ProjectPlatform: String, Codable, Sendable, Hashable, CaseIterable {
     case macOS
     case iOS
@@ -133,6 +134,7 @@ public enum ProjectPlatform: String, Codable, Sendable, Hashable, CaseIterable {
     case web
 }
 
+/// The operations a host supports.
 public struct HostCapabilities: Codable, Sendable, Hashable {
     public let build: Bool
     public let run: Bool
@@ -160,6 +162,7 @@ public struct HostCapabilities: Codable, Sendable, Hashable {
     public static let standard = HostCapabilities()
 }
 
+/// Why a host can or cannot be used on this machine.
 public enum HostAvailabilityStatus: String, Codable, Sendable {
     case ready
     case unsupportedOperatingSystem = "unsupported-os"
@@ -168,6 +171,7 @@ public enum HostAvailabilityStatus: String, Codable, Sendable {
     case unavailable
 }
 
+/// A host's readiness and the reason when it is not ready.
 public struct HostAvailability: Codable, Sendable, Hashable {
     public let host: HostID
     public let status: HostAvailabilityStatus
@@ -189,6 +193,7 @@ public struct HostAvailability: Codable, Sendable, Hashable {
     public var isReady: Bool { status == .ready }
 }
 
+/// A host as clients see it: its identity, capabilities, target and availability.
 public struct HostDescriptor: Codable, Sendable, Hashable {
     public let id: HostID
     public let label: String

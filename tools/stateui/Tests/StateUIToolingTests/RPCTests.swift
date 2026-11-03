@@ -369,6 +369,69 @@ final class RPCTests: XCTestCase {
         try? input.fileHandleForWriting.close()
         try? output.fileHandleForWriting.close()
     }
+
+    /// A parameter of the wrong JSON type is refused. Dropping it would let the
+    /// checkout's stored selection answer a question the client did not ask.
+    func testToolingRPCRejectsMistypedParameters() throws {
+        let handler = ToolingRPC(tooling: Tooling.fixture(at: root))
+
+        for params: JSONValue in [
+            .object(["application": .int(1)]),
+            .object(["host": .string("beos")]),
+            .object(["configuration": .string("fast")]),
+            .object(["dryRun": .string("yes")]),
+            .object(["port": .double(1.5)]),
+            .object(["extraArguments": .array([.int(1)])]),
+            .object(["hosts": .array([.string("beos")])]),
+        ] {
+            XCTAssertThrowsError(try handler.validate(method: "build", params: params)) { error in
+                XCTAssertEqual(error.toolingError.code, "invalidArguments")
+            }
+        }
+
+        XCTAssertNoThrow(try handler.validate(
+            method: "build",
+            params: .object([
+                "application": .string("Gallery"), "host": .string("gtk"),
+                "configuration": .string("release"), "dryRun": .bool(true),
+            ])
+        ))
+        // An unknown method is still refused by `handle`, not by validation.
+        XCTAssertNoThrow(try handler.validate(
+            method: "no/such", params: .object(["application": .int(1)])
+        ))
+    }
+
+    /// A mistyped parameter to a long-running method is an immediate error, not a
+    /// started task that fails later against a fallback selection.
+    func testServerRefusesMistypedParametersBeforeStartingATask() async throws {
+        let input = Pipe()
+        let output = Pipe()
+        let server = RPCServer(
+            handler: ToolingRPC(tooling: Tooling.fixture(at: root)),
+            input: input.fileHandleForReading, output: output.fileHandleForWriting,
+            logger: Logger(level: .quiet)
+        )
+        let running = Task.detached { try await server.run() }
+
+        input.fileHandleForWriting.write(RPCFraming.frame(
+            Data(#"{"jsonrpc":"2.0","id":9,"method":"build","params":{"application":123}}"#.utf8)
+        ))
+        var reader = RPCFrameReader()
+        let body = try XCTUnwrap(try reader.next(from: output.fileHandleForReading))
+        let response = try JSON.decoder().decode(JSONValue.self, from: body)
+        XCTAssertEqual(response["id"], JSONValue.int(9))
+        XCTAssertEqual(response["error"]?["data"]?["code"], JSONValue.string("invalidArguments"))
+        XCTAssertNil(response["result"])
+
+        input.fileHandleForWriting.write(
+            RPCFraming.frame(Data(#"{"jsonrpc":"2.0","method":"exit"}"#.utf8))
+        )
+        try? input.fileHandleForWriting.close()
+        try await running.value
+        try? input.fileHandleForWriting.close()
+        try? output.fileHandleForWriting.close()
+    }
 }
 
 /// A handler whose methods report progress and wait, so the server's task

@@ -3,6 +3,7 @@
 
 import Foundation
 
+/// Small, testable file-system operations used throughout the tool.
 public enum FileSystem {
     public static let manager = FileManager.default
 

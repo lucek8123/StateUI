@@ -25,8 +25,13 @@ public struct RPCContext: Sendable {
     public static let silent = RPCContext()
 }
 
+/// The methods an RPC server exposes.
 public protocol RPCHandling: Sendable {
-    /// Methods an editor waits on return a `{ taskId, status: "started" }`
+    /// Checks a request's parameter shape before the server decides whether to
+    /// start a task. A malformed value is refused as an immediate error rather
+    /// than being silently replaced by a selection the client did not ask for.
+    func validate(method: String, params: JSONValue?) throws
+    /// Methods a client waits on return a `{ taskId, status: "started" }`
     /// answer and report their work through `task.progress`,
     /// `task.completed` and `task.failed` notifications.
     func isLongRunning(method: String, params: JSONValue?) -> Bool
@@ -34,6 +39,8 @@ public protocol RPCHandling: Sendable {
 }
 
 public extension RPCHandling {
+    func validate(method: String, params: JSONValue?) throws {}
+
     func isLongRunning(method: String, params: JSONValue?) -> Bool { false }
 
     func handle(method: String, params: JSONValue?) async throws -> JSONValue {
@@ -147,6 +154,21 @@ public struct RPCServer: Sendable {
             if request.method == "exit" {
                 break
             }
+
+            // Validate before choosing a task or an immediate answer: a mistyped
+            // parameter must not start work against a fallback selection.
+            do {
+                try handler.validate(method: request.method, params: request.params)
+            } catch {
+                let structured = error.toolingError
+                if request.isNotification {
+                    logger.debug("notification \(request.method) has invalid params: \(structured)")
+                } else if let id = request.id {
+                    writer.send(RPCResponse(id: id, error: structured))
+                }
+                continue
+            }
+
             if request.isNotification {
                 Task {
                     do {

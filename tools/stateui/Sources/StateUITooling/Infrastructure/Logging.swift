@@ -3,6 +3,7 @@
 
 import Foundation
 
+/// How much diagnostics a run prints.
 public enum LogLevel: Int, Sendable, Comparable {
     case quiet = 0
     case error = 1

@@ -148,6 +148,7 @@ public struct FileAction: Codable, Sendable, Hashable {
     }
 }
 
+/// Everything a build will do: its process steps, file actions and outputs.
 public struct BuildPlan: Codable, Sendable {
     public let application: String
     public let host: HostID
@@ -176,6 +177,7 @@ public struct BuildPlan: Codable, Sendable {
     }
 }
 
+/// One test suite's process steps, file actions and requirements.
 public struct TestSuitePlan: Codable, Sendable {
     public let name: String
     public let detail: String
@@ -203,6 +205,7 @@ public struct TestSuitePlan: Codable, Sendable {
     }
 }
 
+/// The test suites a host will run for an application.
 public struct TestPlan: Codable, Sendable {
     public let application: String?
     public let host: HostID
@@ -215,6 +218,7 @@ public struct TestPlan: Codable, Sendable {
     }
 }
 
+/// Everything starting an application will do, including its build.
 public struct RunPlan: Codable, Sendable {
     public let application: String
     public let host: HostID
@@ -248,6 +252,7 @@ public struct RunPlan: Codable, Sendable {
     }
 }
 
+/// Everything deploying an application will do, including its build.
 public struct DeployPlan: Codable, Sendable {
     public let application: String
     public let host: HostID
@@ -276,16 +281,19 @@ public struct DeployPlan: Codable, Sendable {
     }
 }
 
+/// The debug adapter a plan launches.
 public enum DebugAdapter: String, Codable, Sendable {
     case lldbDAP = "lldb-dap"
     case chrome
 }
 
+/// Whether a debug session launches a new process or attaches to one.
 public enum DebugRequestKind: String, Codable, Sendable {
     case launch
     case attach
 }
 
+/// A debugger launch or attach configuration, with the build that prepares its artifact.
 public struct DebugPlan: Codable, Sendable {
     public let adapter: DebugAdapter
     public let request: DebugRequestKind
@@ -406,6 +414,7 @@ public struct LSPIndexPlan: Codable, Sendable {
     }
 }
 
+/// The selections a build command accepts.
 public struct BuildRequest: Sendable {
     public var application: String?
     public var host: HostID?
@@ -432,6 +441,7 @@ public struct BuildRequest: Sendable {
     }
 }
 
+/// The selections a test command accepts.
 public struct TestRequest: Sendable {
     public var application: String?
     public var host: HostID?
@@ -481,6 +491,7 @@ public struct TestRequest: Sendable {
     }
 }
 
+/// The selections a run command accepts.
 public struct RunRequest: Sendable {
     public var application: String?
     public var host: HostID?
@@ -511,6 +522,7 @@ public struct RunRequest: Sendable {
     }
 }
 
+/// The selections a deploy command accepts.
 public struct DeployRequest: Sendable {
     public var application: String?
     public var host: HostID?
@@ -537,6 +549,7 @@ public struct DeployRequest: Sendable {
     }
 }
 
+/// The selections a debug command accepts.
 public struct DebugRequest: Sendable {
     public var application: String?
     public var host: HostID?

@@ -134,6 +134,51 @@ final class ProjectTests: XCTestCase {
         XCTAssertTrue(source.contains("Widgets"))
     }
 
+    /// The 0.8.1 HelloWorld manifest names three local packages: the library
+    /// root, the head package and the testing package. A scaffold outside `apps/`
+    /// has to rewrite all three, or the generated application resolves the
+    /// testing package against a path that does not exist.
+    func testScaffoldRewritesEveryLocalPackageOfTheHelloWorldModel() throws {
+        let checkout = try TestFixture.makeCheckout(
+            at: root, applications: ["HelloWorld"], hosts: [.gtk]
+        )
+        try TestFixture.write(
+            """
+            // swift-tools-version:6.4
+            import PackageDescription
+            let package = Package(
+                name: "HelloWorld",
+                dependencies: [
+                    .package(name: "StateUIRoot", path: "../.."),
+                    .package(name: "StateUITesting", path: "../../lib/StateUI/StateUI.Testing"),
+                    .package(name: "StateUIHead", path: "../../lib/StateUI.Head"),
+                ],
+                targets: [.executableTarget(name: "HelloWorldGTK", path: "Platforms/GTK")]
+            )
+            """,
+            to: checkout.appendingPathComponent("apps/HelloWorld/Package.swift")
+        )
+        try TestFixture.write(
+            "// HelloWorld\n",
+            to: checkout.appendingPathComponent("apps/HelloWorld/Platforms/GTK/main.swift")
+        )
+
+        let elsewhere = try TestFixture.temporaryDirectory("scaffold-outside")
+        defer { TestFixture.remove(elsewhere) }
+        let project = try Tooling.fixture(at: checkout).project()
+        let created = try ScaffoldService().create(
+            name: "Widgets", appsDirectory: elsewhere, project: project
+        )
+        let relative = FileSystem.relativePath(from: created, to: checkout)
+        let package = try FileSystem.read(created.appendingPathComponent("Package.swift"))
+
+        XCTAssertTrue(package.contains("\"\(relative)/lib/StateUI/StateUI.Testing\""))
+        XCTAssertTrue(package.contains("\"\(relative)/lib/StateUI.Head\""))
+        XCTAssertTrue(package.contains("\"\(relative)\""))
+        XCTAssertFalse(package.contains("\"../../lib/StateUI/StateUI.Testing\""))
+        XCTAssertFalse(package.contains("\"../../lib/StateUI.Head\""))
+    }
+
     func testScaffoldRejectsDuplicateAndInvalidNames() throws {
         let checkout = try TestFixture.makeCheckout(
             at: root, applications: ["HelloWorld"], hosts: [.gtk]

@@ -3,6 +3,7 @@
 
 import Foundation
 
+/// Describes the current project and the applications and hosts it holds.
 public struct ProjectService: Sendable {
     public let tooling: Tooling
 

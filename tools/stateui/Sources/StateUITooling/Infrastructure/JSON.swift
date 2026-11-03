@@ -3,6 +3,7 @@
 
 import Foundation
 
+/// The encoder and decoder every result and protocol frame uses.
 public enum JSON {
     public static func encoder(pretty: Bool = false) -> JSONEncoder {
         let encoder = JSONEncoder()
@@ -28,6 +29,7 @@ extension Data {
     }
 }
 
+/// Dotted-version parsing and comparison.
 public enum Version {
     /// The first dotted version in `text`.
     public static func first(in text: String) -> String? {

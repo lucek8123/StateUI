@@ -120,6 +120,10 @@ that is usable now.
   — each host's heads, builds, debugging, and registrations.
 - [Project structure and development](docs/development.md) — packages, Gallery,
   build, F5, and test commands.
+- [StateUI CLI](docs/developer-tooling/cli-reference.md) — the standalone `stateui`
+  tool for build, test, run, deploy, debug, toolchain checks and JSON-RPC, with its
+  [architecture](docs/developer-tooling/architecture.md) and
+  [protocol](docs/developer-tooling/protocol.md).
 - [Tested setups](docs/tested-setups.md) — the systems, toolchains and devices each
   host's suite passes on.
 - [Design notes](docs/design/README.md) — the rule, the reason and the trap behind

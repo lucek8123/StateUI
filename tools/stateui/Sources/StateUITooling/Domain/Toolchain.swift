@@ -3,6 +3,7 @@
 
 import Foundation
 
+/// One component a host needs, and how it is recognised.
 public struct ToolchainRequirement: Codable, Sendable, Hashable {
     public enum Kind: String, Codable, Sendable {
         case executable
@@ -34,6 +35,7 @@ public struct ToolchainRequirement: Codable, Sendable, Hashable {
     }
 }
 
+/// What a toolchain check found for one component.
 public struct ToolchainFinding: Codable, Sendable, Hashable {
     public enum Status: String, Codable, Sendable {
         case found
@@ -73,6 +75,7 @@ public struct ToolchainFinding: Codable, Sendable, Hashable {
     public var isSatisfied: Bool { status == .found || status == .notApplicable }
 }
 
+/// Every finding for the hosts a doctor run checked.
 public struct ToolchainReport: Codable, Sendable {
     public let platform: Platform
     public let findings: [ToolchainFinding]
@@ -89,6 +92,7 @@ public struct ToolchainReport: Codable, Sendable {
     public var ready: Bool { missing.isEmpty }
 }
 
+/// A physical device, simulator, emulator or local target a host can run on.
 public struct Device: Codable, Sendable, Hashable {
     public enum Kind: String, Codable, Sendable {
         case physical
@@ -125,6 +129,7 @@ public struct Device: Codable, Sendable, Hashable {
     }
 }
 
+/// A browser a Web application can be served to.
 public struct Browser: Codable, Sendable, Hashable {
     public let id: String
     public let name: String

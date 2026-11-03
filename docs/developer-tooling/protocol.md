@@ -4,7 +4,7 @@
 framing, the LSP convention: a header block, a blank line, then a body whose
 length is counted in **bytes**. stdout carries frames only; every diagnostic the
 tool writes goes to stderr. Protocol version `1`, reported by `initialize` under
-`serverInfo.protocolVersion` and checked by both editors before they ask anything
+`serverInfo.protocolVersion` and checked by a client before it asks anything
 else.
 
 A client that speaks a version the server does not is refused before any other
@@ -20,8 +20,7 @@ Content-Length: 82\r\n
 ```
 
 A frame cut short stays buffered until its tail arrives. A header block naming
-no `Content-Length` is not a frame: the bytes are dropped, and the Neovim client
-reports how many went rather than decoding them.
+no `Content-Length` is not a frame: the bytes are dropped rather than decoded.
 
 ## Lifecycle
 
@@ -29,19 +28,20 @@ reports how many went rather than decoding them.
 | --- | --- |
 | `initialize` with `protocolVersion` | `serverInfo` (`name`, `version`, `protocolVersion`), `capabilities` (`build`, `test`, `run`, `deploy`, `debug`, `devices`, `browsers`, `lsp`, `cancellation`, `size`, `scaffold`, `groups`), `hosts` (`id`, `label`, `platforms`), `applications` |
 | `shutdown` | `null` |
-| `exit` notification | ends the loop; in-flight tasks are cancelled, so the tool's child never outlives the editor |
+| `exit` notification | ends the loop; in-flight tasks are cancelled, so the tool's child never outlives the client |
 | `$/cancelRequest` notification with `id` | cancels the request or task that id names; nothing answers it |
 | any other notification | handled and unanswered |
 
-A request with no `id` is dropped. Closing stdin ends the session; a task still
-working at that point is given up on rather than left running.
+A request with no `id` is a notification: it is handled and never answered.
+Closing stdin ends the session; a task still working at that point is given up
+on rather than left running.
 
 ## Refusals
 
 Every tooling failure arrives as a JSON-RPC error under `-32000` whose `data` is
 the structured error - `code`, `message`, `context`, `suggestion`. A method the
 server does not know is refused the same way, with `data.code` `protocolError`,
-rather than JSON-RPC's `-32601`: the clients read one shape for every refusal,
+rather than JSON-RPC's `-32601`: clients read one shape for every refusal,
 and the suggestion tells the user what to do.
 
 | Code | Meaning |
@@ -85,7 +85,7 @@ application or group path) wherever the CLI takes `--project`.
 | `devices` | `host` | a host's devices: `id`, `name`, `kind`, `state` |
 | `browsers` | - | the Web host's browsers |
 | `config/get` | `project` | `.stateui/config.json` merged with the local file |
-| `config/set` | `host`, `application`, `configuration`, `device` + `deviceHost`, `browser` | the merged configuration, after writing the local file. An application the checkout does not answer is refused as `applicationNotFound`, naming what stands here, so an editor's typed name cannot select something nothing builds. |
+| `config/set` | `host`, `application`, `configuration`, `device` + `deviceHost`, `browser` | the merged configuration, after writing the local file. An application the checkout does not answer is refused as `applicationNotFound`, naming what stands here, so a client's typed name cannot select something nothing builds. |
 | `build` | `application`, `host`, `configuration`, `device`, `browser`, `architecture`, `extraArguments`, `dryRun` | a `BuildPlan`, or an `ExecutionOutcome` |
 | `test` | `application`, `host`, `configuration`, `device`, `filter`, `suite`, `inBrowser`, `buildOnly`, `updateExports`, `staleOnly`, `dryRun` | a `TestPlan`, or an outcome |
 | `run` | `application`, `host`, `configuration`, `device`, `browser`, `port`, `detach`, `prepare`, `noBuild`, `dryRun` | `{build, run}` plans, or an outcome |
@@ -101,13 +101,12 @@ application or group path) wherever the CLI takes `--project`.
 | `group/releases` | `checkout`, `minimum` | the releases the remote offers, oldest first, at or above the floor |
 | `group/create` | `name`, `releases`, `destination`, `checkout`, `minimum`, `dryRun` | the outcome of laying out the group |
 
-## What the clients read
+## Client contract
 
-The VS Code extension keeps one `stateui rpc --stdio` child for the whole
-workspace and asks every question through it; a task provider forwards
-`task.progress` to its output channel and `kill()` sends `$/cancelRequest` with
-the task id once the server has named one. The Neovim plugin does the same, streaming progress into its output window and the
-captured stream into the quickfix list, and refuses to speak protocol `2` to a server
-that speaks `1`.
-Neither editor compares release versions: the floor is forwarded to the binary,
-which owns what a version means.
+A client keeps one `stateui rpc --stdio` child for a workspace and asks every
+question through it. It forwards `task.progress` to whatever it shows the user,
+sends `$/cancelRequest` with the request or task id once the server has named
+one, and treats a closed child as a failure to report rather than something to
+retry blindly. It checks `protocolVersion` during `initialize` and refuses a
+server that speaks another version. A client does not compare release versions:
+the floor is forwarded to the binary, which owns what a version means.

@@ -291,6 +291,7 @@ public struct GroupService: Sendable {
         do {
             result = try await tooling.executor.execute(invocation)
         } catch {
+            if error.toolingError.code == "operationCancelled" { throw error }
             throw ToolingError.commandFailed(
                 "`git branch --remotes` could not run in \(root.path): \(error.toolingError.message)",
                 context: ["root": root.path],
@@ -333,6 +334,7 @@ public struct GroupService: Sendable {
         do {
             result = try await tooling.executor.execute(invocation)
         } catch {
+            if error.toolingError.code == "operationCancelled" { throw error }
             throw ToolingError.commandFailed(
                 "`git remote get-url \(remote)` could not run in \(root.path): \(error.toolingError.message)",
                 context: ["remote": remote, "root": root.path],

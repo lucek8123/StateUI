@@ -6,6 +6,7 @@ import Foundation
 import Glibc
 #endif
 
+/// Plans and executes an application's build for one host.
 public struct BuildService: Sendable {
     public let tooling: Tooling
 
@@ -33,6 +34,7 @@ public struct BuildService: Sendable {
     }
 }
 
+/// Plans and executes an application's test suites for one host.
 public struct TestService: Sendable {
     public let tooling: Tooling
 
@@ -127,6 +129,7 @@ public struct TestService: Sendable {
     }
 }
 
+/// Plans and executes an application, or starts it in the background.
 public struct RunService: Sendable {
     public let tooling: Tooling
 
@@ -187,6 +190,7 @@ public struct RunService: Sendable {
     }
 }
 
+/// Plans and executes a release build into its deployment destination.
 public struct DeployService: Sendable {
     public let tooling: Tooling
 
@@ -236,6 +240,7 @@ public struct DeployService: Sendable {
     }
 }
 
+/// Prepares a debugger launch or attach configuration for one host.
 public struct DebugService: Sendable {
     public let tooling: Tooling
 
@@ -296,6 +301,7 @@ public struct DebugService: Sendable {
     }
 }
 
+/// Prepares and cleans the language server's per-host build index.
 public struct LSPService: Sendable {
     public let tooling: Tooling
 

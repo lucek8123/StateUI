@@ -12,6 +12,7 @@ public enum ToolingVersion {
     /// changes shape incompatibly.
     public static let protocolVersion = 1
 
+    /// The one-line identity `stateui --version` and `stateui version` print.
     public static var summary: String {
         "stateui \(version) (protocol \(protocolVersion))"
     }

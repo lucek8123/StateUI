@@ -31,7 +31,7 @@ struct StateUICommand {
 
             switch command {
             case "version":
-                emit(versionResult(), json: parsed.flag("json"))
+                emit(versionResult(), json: parsed.flag("json"), human: ToolingVersion.summary)
             case "help", "--help", "-h":
                 print(help)
             case "doctor":
@@ -1104,10 +1104,10 @@ struct StateUICommand {
       version                    Print the tool and protocol versions.
       doctor [--host H]          Check the toolchain.
       project|info               Describe the current project.
-      apps                       List applications.
-      config [get|set]           Show or change the checkout's host, application and configuration.
-      hosts                      List hosts and their availability.
-      host [list|set H]          Show or select the default host.
+      apps [list|info NAME]      List applications, or describe one.
+      config [get|list|set]      Show or change the checkout's host, application and configuration.
+      hosts [list|info H]        List hosts and their availability, or describe one.
+      host [list|get|set H]      Show or select the default host.
       devices --host H           List a host's devices.
       browsers                   List the Web host's browsers.
       build [options]            Build an application.

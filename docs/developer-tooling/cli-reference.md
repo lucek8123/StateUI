@@ -55,7 +55,7 @@ Anything after `--` is passed to the toolchain beside the application's own name
 | `lsp clean [--host H \| --all] [--dry-run]` | remove an index, so the host indexes again |
 | `debug plan [--application N] [--host H] [--configuration C] [--device ID] [--browser ID]` | print the adapter, program, arguments, environment, attach commands and the build that prepares them |
 | `debug prepare [--application N] [--host H] [--configuration C] [--device ID] [--browser ID] [--dry-run]` | build and launch what the plan names, and write `debugger.json` where the debugger reads it |
-| `rpc --stdio` | JSON-RPC 2.0 server over stdio; see `PROTOCOL.md` |
+| `rpc --stdio` | JSON-RPC 2.0 server over stdio; see `protocol.md` |
 
 ## Output and exit codes
 
@@ -74,4 +74,4 @@ host, a missing tool, a toolchain that exited non-zero, a cancelled operation.
 
 `__serve-web`, `__web-test`, `__web-browser-test`, `__android-logcat`,
 `__android-debug` and `__uikit-debug` are invoked by generated plans. They are
-not part of the public surface, and no editor calls them.
+not part of the public surface, and clients do not call them.

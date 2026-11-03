@@ -9,7 +9,7 @@ import PackageDescription
 let package = Package(
     name: "StateUITooling",
     platforms: [
-        .macOS(.v13),
+        .macOS(.v26),
     ],
     products: [
         .executable(name: "stateui", targets: ["stateui"]),

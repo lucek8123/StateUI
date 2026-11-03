@@ -4,9 +4,9 @@
 
 StateUI development operations live in one native Swift executable,
 `stateui`, built by the separate SwiftPM package at `tools/stateui/`. The root
-`Package.swift` remains the dependency-free StateUI library manifest. VS Code
-and Neovim are thin clients of the executable over a versioned JSON-RPC 2.0
-stdio protocol.
+`Package.swift` remains the dependency-free StateUI library manifest. Clients use
+the executable over a versioned JSON-RPC 2.0 stdio protocol and are maintained
+separately from this package.
 
 The executable owns:
 
@@ -20,7 +20,7 @@ The executable owns:
 * application scaffolding;
 * persistent StateUI configuration.
 
-Editors own only editor lifecycle and presentation: quick picks, status bars,
+Clients own only their own lifecycle and presentation: pickers, status bars,
 terminals, output channels, language-server processes and debugger sessions.
 
 ## 2. Why a separate package
@@ -52,8 +52,8 @@ Explicit value types, all `Codable` and `Sendable` where practical:
 * `BuildConfiguration`, `ProjectPlatform`;
 * `ToolchainRequirement`, `ToolchainFinding`, `ToolchainReport`;
 * `BuildRequest`, `TestRequest`, `RunRequest`, `DeployRequest`, `DebugRequest`;
-* `ProcessInvocation`, `PlanStep`, `BuildPlan`, `TestPlan`, `RunPlan`,
-  `DeployPlan`, `DebugPlan`;
+* `ProcessInvocation`, `FileAction`, `BuildPlan`, `TestPlan`, `RunPlan`,
+  `DeployPlan`, `DebugPlan`, `ExecutionOutcome`;
 * `ProjectInfo`, `ProjectContext`, `StateUIConfiguration`;
 * `ToolingError`.
 
@@ -77,7 +77,7 @@ branch on strings.
 | `DebugService` | Build and launch preparation, structured `DebugPlan` generation, and the facts file a debugger reads. |
 | `SizeService` | Weigh each Web module against the budget the repository records. |
 | `WebServerService` | Give up the page a Web run left serving: read the process the site's `server.json` names, stop it, and remove the facts. |
-| `LSPService` | Resolve the host's SourceKit environment, build the host's index store, write the folder's editor settings, and remove an index. |
+| `LSPService` | Resolve the host's SourceKit environment, build the host's index store, write the folder's client settings, and remove an index. |
 | `ScaffoldService` | Copy the canonical `apps/HelloWorld` model, rename it, and rewrite the checkout path. |
 | `GroupService`, `GroupLayout` | List the releases a remote offers, apply a version floor, and lay out a group's clones, workspace, settings and debug configurations. `GroupLayout` is pure, so the rules are tested without a repository. |
 
@@ -114,8 +114,9 @@ availability (whether this machine can do it now).
 * `Platform`: one OS/architecture detection point.
 * `Logging`: stderr diagnostics with redaction.
 * `CommandLine`: a small deterministic parser (no shell interpolation).
-* `HTTP`: a static Web server used by the Web host (`__serve-web`). Its facts file names
-  the port, the URL and the process serving, so a later `stop` can give the page up.
+* `StaticWebServer`: the native static file server the Web host runs (`__serve-web`).
+  Its facts file names the port, the URL and the process serving, so a later `stop`
+  can give the page up.
 * `JSON`: shared encoder/decoder settings.
 
 ### Protocol (`Sources/StateUITooling/Protocol`)
@@ -148,7 +149,7 @@ running, say - so it does not fail the plan.
 
 `stateui build Gallery --dry-run` prints the executable, arguments, working
 directory and environment overrides without running anything. The same plan is
-executed by `BuildService` or sent to an editor as a debug pre-launch step.
+executed by `BuildService` or sent to a client as a debug pre-launch step.
 
 This separation gives unit tests without SDKs, consistent logging, cancellation
 and actionable failures.
@@ -176,11 +177,11 @@ schema versions, invalid host names and invalid configurations. Selections are
 written to `local.json` so shared configuration does not acquire developer
 paths.
 
-Nothing migrates an editor's old keys into the checkout: the extension reads the
+Nothing migrates an older client's keys into the checkout: a client reads the
 selection from the tool through `config/get` and writes it through `config/set`,
 which lands in `local.json`. The settings file the tool writes carries only keys
-an editor actually reads - VS Code's own `search.exclude`, and
-`stateui.minimumRelease` in a group folder whose releases name complete versions.
+a client reads - `search.exclude`, and `stateui.minimumRelease` in a group folder
+whose releases name complete versions.
 
 ## 6. Error and logging model
 
@@ -211,7 +212,7 @@ never dumped; environment logging is limited to keys explicitly set by a plan.
 convention: lengths are counted in bytes, stdout carries only frames, and logs go
 to stderr. Protocol version `1`, reported under `serverInfo.protocolVersion`; a
 client speaking another version is refused before any other work. Every method is
-documented in `PROTOCOL.md`.
+documented in `protocol.md`.
 
 A request that runs something long - `build`, `test`, `run`, `deploy`,
 `debug/prepare`, `size/budgets`, `lsp/configure`, `group/create` - answers at once
@@ -225,75 +226,7 @@ its child with SIGTERM, then SIGKILL. Tasks run concurrently, an `exit`
 notification or a closed stdin cancels whatever is still working, and a frame that
 is not JSON is answered as a parse error without ending the session.
 
-## 8. Editor architecture
-
-### VS Code (`editors/vscode`)
-
-* `Sources/resolve.ts`: finds the binary - `stateui.executablePath`,
-  `STATEUI_BIN`, the workspace checkout's `tools/stateui/.build/{release,debug}/stateui`,
-  then `PATH`, with the Windows suffix handled.
-* `Sources/rpc.ts` and `Sources/backend.ts`: one `stateui rpc --stdio` child for
-  the workspace, `Content-Length` framing, request correlation, task
-  notifications, cancellation by request id or task id, and a child that dies
-  being reported rather than retried blindly.
-* `Sources/extension.ts`: the five selection pickers, the three status bar items,
-  build, run, tests, deploy, both conformance families, index clean, toolchain
-  doctor, scaffolding and project groups - each through the session, the long ones
-  as tasks. The manifest and the registered commands are checked against each other
-  in both directions by the tests.
-* `Sources/debug.ts`: `debug/plan` translated into an `lldb-dap` or `chrome`
-  configuration, then `debug/prepare` as a task, and the host's facts file read
-  back to fill the pid, serial or URL the plan could not name.
-* `Sources/reinstall.ts`: packs the checkout's extension and installs the VSIX over
-  the running one.
-* A task provider of type `stateui`, whose `kill()` cancels the task the server named
-  and, for a run on the Web host, gives up the served page with `web/stop` - the run
-  answers `started` while a detached process keeps the port listening.
-* Packaging is a normal VSIX built with npm and vsce. The binary is installed
-  separately and is not bundled six times.
-
-### Neovim (`editors/neovim`)
-
-* Lua modules: `config`, `client`, `commands`, `dap`, `frames`, `init`, `lsp`,
-  `select`, `status`, `ui`; `plugin/stateui.vim` registers `:StateUI` and starts
-  nothing.
-* `client.lua` keeps the child with `jobstart` and `chansend`, and `frames.lua`
-  reads `Content-Length` framing byte-exactly: a frame cut short waits for its
-  tail, and a header block naming no length is dropped and counted rather than
-  decoded.
-* One command tree, `:StateUI <subcommand>`; a list the tool answers - hosts,
-  applications, devices, browsers - is offered as a choice rather than printed, each entry
-  carrying the tool's own words beside the name the choice is made under. A choice opens
-  Telescope's picker when Telescope is installed and Neovim's prompt when it is not, and
-  giving a choice up picks nothing rather than acting on a guess. `:StateUI menu` lists the
-  commands with their descriptions through that picker and runs the one chosen.
-  `vim.ui.input` still asks for a new application's name. There is no Telescope dependency:
-  the picker is built from Telescope's own modules when it is present, and the plugin's
-  fallback is Neovim's prompt.
-* Telescope 0.1.x consumes `attach_mappings`, not a `mappings` field, so `<CR>` is bound
-  inside `attach_mappings` and scoped to this picker; nothing a person mapped elsewhere is
-  rewritten by it.
-* Answers that are not a choice are laid out as words by `ui.describe`: keys beside the
-  values they name, lists one line each, nested parts indented under the key that holds
-  them. No brace, quote or comma reaches the window.
-* Tasks stream progress into an output window - a float over the editor by default,
-  `q` or `<Esc>` giving it up, `:StateUI output` showing it again - and put the captured
-  stream in the quickfix list; a streamed window opens without the focus, a window the
-  user asked to read takes it. `:StateUI cancel` gives up the operation by task id, and a
-  cancelled task is reported as given up on; with nothing in flight on the Web host it
-  gives up the served page through `web/stop`.
-* `status.lua` keeps the selection the tool answers in globals and renders it as one
-  short string, so any statusline can show the host and application without the
-  plugin deciding either.
-* SourceKit-LSP is started with the environment the binary resolves for the host
-  in use; the server the plugin started is looked up by id with uninitialized
-  servers included, so an unchanged configuration costs no second server.
-* nvim-dap is optional: a `DebugPlan` becomes a nvim-dap configuration, and
-  `dap.install()` hands the plans to nvim-dap's own pickers when it is installed.
-* Tested on Neovim 0.12.6. No older version is claimed: the plugin asks
-  `vim.lsp.get_clients` by id with uninitialized servers included.
-
-## 9. LSP responsibilities
+## 8. LSP responsibilities
 
 The binary does not implement a language server. `lsp/environment` answers what a
 server needs for the host in use:
@@ -306,20 +239,19 @@ server needs for the host in use:
 * `notes`, saying what was not found rather than guessing it.
 
 `lsp/configure` fills that store: the host's head is built with an index SourceKit
-reads while the editor works. It also writes the folder's `.vscode/settings.json`
+reads while a client works. It also writes the folder's `.vscode/settings.json`
 - only `search.exclude`, keeping every key that was already there. Which host and
 application are being indexed is the checkout's own selection in
 `.stateui/config.json`, so nothing naming them is written into a settings file no
 code reads. `lsp/clean` removes a store, one host's or every host's, so the host
 indexes again.
 
-Neovim starts SourceKit-LSP itself: the host's variables are set on the editor
-before the server starts, the store is passed as `--scratch-path`, and a server
-standing on an unchanged answer is left alone. VS Code's Swift extension owns its
-own server and index, so the extension only asks the binary to index a host or
-clean every store. Neither editor reconstructs SDK settings.
+A client starts SourceKit-LSP itself: the variables `lsp/environment` answers are
+set before the server starts, the store is passed as `--scratch-path`, and a
+server standing on an unchanged answer is left alone. The tool neither implements
+a language server nor reconstructs SDK settings.
 
-## 10. Debugger responsibilities
+## 9. Debugger responsibilities
 
 The binary produces a `DebugPlan`. This checkout's GTK plan for `Gallery`, as
 `stateui debug plan Gallery --host gtk --json` answers, with the paths shortened
@@ -354,7 +286,7 @@ to fit and one step's arguments left out:
 build makes rather than something built differently. `pid`, `url`, `webRoot`,
 `runtimeExecutable` and `factsFile` appear when the host names them; a plan that
 cannot name a pid or a URL yet carries `factsFile`, the directory
-`debug/prepare` writes `debugger.json` into, where the editor reads back the pid,
+`debug/prepare` writes `debugger.json` into, where a client reads back the pid,
 the device or simulator serial, the served URL and port, and the symbols to load.
 
 Host distinctions are explicit:
@@ -364,9 +296,9 @@ Host distinctions are explicit:
 * Android: `lldb-dap` attach through `remote-android`, NDK `lldb-server`.
 * Web: browser JavaScript debugger (`chrome` adapter), not LLDB.
 
-Editors own debugger lifecycle. The binary owns preparation and configuration.
+Clients own debugger lifecycle. The binary owns preparation and configuration.
 
-## 11. Distribution
+## 10. Distribution
 
 The tool is built from source, per machine:
 
@@ -375,17 +307,15 @@ swift build --package-path tools/stateui    # .build/debug/stateui, or --configu
 ```
 
 Nothing in this repository produces platform tarballs or checksums, so no
-downloadable binary is claimed here. The VS Code extension packs itself with npm
-and vsce into `artifacts/stateui-<version>.vsix`; the binary is installed
-separately and is not bundled six times.
+downloadable binary is claimed here.
 
-Both editors resolve the binary themselves - an explicit setting, `STATEUI_BIN`,
-the checkout's own build, then `PATH` - and check the version and protocol the
-handshake names before asking anything else. A binary too old to speak protocol
-`1` is reported with what to do about it; neither editor downloads or replaces a
-binary without the user asking.
+A client locates the binary by whatever means it chooses - a setting, an
+environment variable, or the checkout's own build - and checks the version and
+protocol the handshake names before asking anything else. A binary too old to
+speak protocol `1` is reported with what to do about it; no client downloads or
+replaces a binary without the user asking.
 
-## 12. Testing strategy
+## 11. Testing strategy
 
 * Swift tests (`swift test --package-path tools/stateui`): host name parsing,
   configuration round-trip and validation, discovery against real fixture
@@ -395,24 +325,15 @@ binary without the user asking.
   configurations a group writes, git resolved from `PATH` - the options the
   commands read being options the parser accepts, error encoding, process
   execution against temporary fake executables (success, non-zero exit, missing
-  executable, streamed output, cancellation, environment, working directory), and
-  the RPC server's framing, correlation, task notifications, cancellation,
-  refusals and the release floor it applies. Host plans are read as plans on Linux -
-  GTK's desktop entry, WinUI's stubbed `taskkill` path, AppKit's bundle naming the
-  icon it drew when the icon tools stand, and naming nothing when they do not - but
-  a plan being readable is not a bundle being built.
-* VS Code: `npm run compile && npm test` runs 126 assertions without an extension
-  host - manifest and registration checked in both directions, binary resolution,
-  debug-plan translation, facts read back, the session framing and following
-  tasks, reinstall paths, and the release floor forwarded to the binary.
-  `Tests/run.integration.ts` targets a suite no file builds; it stays as the
-  documented environment-dependent runner.
-* Neovim: four headless checks from the repository root - `smoke.lua` (command
-  registration and byte-exact framing), `tasks.lua` (the task lifecycle against a
-  fake peer), `rpc.lua` (the plugin against the real binary, both refusals, and a
-  command warming the process), `lsp.lua` (SourceKit-LSP standing, answering its
-  handshake, carrying the host's environment, costing no second server).
+  executable, streamed output, cancellation, environment, working directory),
+  scaffolding rewriting every local package path, and the RPC server's framing,
+  correlation, task notifications, cancellation and refusals. A subprocess test
+  drives the built executable over stdio, so the protocol is exercised the way a
+  client sees it rather than only through an in-process handler. Host plans are
+  read as plans on Linux - GTK's desktop entry, WinUI's stubbed `taskkill` path,
+  AppKit's bundle naming the icon it drew when the icon tools stand, and naming
+  nothing when they do not - but a plan being readable is not a bundle being built.
 * Platform behavior is claimed only where the host runs. Linux claims GTK
-  availability and the CLI flows exercised here; macOS, Windows and Android
-  behavior is not claimed at all, because nothing on this machine runs them. A
-  check that cannot run is recorded as not run, never as passed.
+  availability and the CLI flows exercised there; macOS, Windows and Android
+  behavior is not claimed where no machine runs them. A check that cannot run is
+  recorded as not run, never as passed.

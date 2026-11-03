@@ -3,6 +3,7 @@
 
 import Foundation
 
+/// Finds applications in a project group or at a checkout root, and reads the StateUI checkout their manifest points at.
 public struct ApplicationResolver: Sendable {
     public init() {}
 
@@ -69,6 +70,7 @@ public struct ApplicationResolver: Sendable {
     }
 }
 
+/// Resolves the project, application and checkout a command runs against.
 public struct ProjectDiscovery: Sendable {
     public let applications: ApplicationResolver
 
@@ -164,6 +166,7 @@ public struct ProjectDiscovery: Sendable {
     }
 }
 
+/// Reads and writes the shared and local configuration files of a checkout.
 public struct ConfigurationService: Sendable {
     public init() {}
 

@@ -11,7 +11,116 @@ public struct ToolingRPC: RPCHandling {
         self.tooling = tooling
     }
 
-    /// The operations an editor starts and then follows: a plan alone is
+    /// Checks that every parameter a method reads carries the JSON type it
+    /// expects. A value of the wrong type, or a host or configuration name that
+    /// stands for nothing, is refused instead of being dropped so the checkout's
+    /// stored selection answers in its place.
+    public func validate(method: String, params: JSONValue?) throws {
+        guard Self.methods.contains(method) else { return }
+        guard let params, params != .null else { return }
+        guard let object = params.objectValue else {
+            throw ToolingError.invalidArguments(
+                "params must be a JSON object.",
+                context: ["method": method]
+            )
+        }
+
+        for key in Self.stringParameters where object[key] != nil {
+            guard object[key]?.stringValue != nil else {
+                throw Self.mistyped(key, expected: "a string", method: method)
+            }
+        }
+        for key in Self.booleanParameters where object[key] != nil {
+            guard object[key]?.boolValue != nil else {
+                throw Self.mistyped(key, expected: "a boolean", method: method)
+            }
+        }
+        for key in Self.integerParameters where object[key] != nil {
+            guard object[key]?.intValue != nil else {
+                throw Self.mistyped(key, expected: "an integer", method: method)
+            }
+        }
+        for key in Self.stringArrayParameters {
+            guard let value = object[key] else { continue }
+            guard let array = value.arrayValue, array.allSatisfy({ $0.stringValue != nil }) else {
+                throw Self.mistyped(key, expected: "an array of strings", method: method)
+            }
+        }
+
+        if let raw = object["host"]?.stringValue, HostID(parsing: raw) == nil {
+            throw Self.unknownHost(raw, key: "host", method: method)
+        }
+        if let raw = object["deviceHost"]?.stringValue, HostID(parsing: raw) == nil {
+            throw Self.unknownHost(raw, key: "deviceHost", method: method)
+        }
+        if let raw = object["configuration"]?.stringValue,
+           BuildConfiguration(parsing: raw) == nil {
+            throw ToolingError.invalidArguments(
+                "configuration '\(raw)' is not debug or release.",
+                context: ["method": method, "configuration": raw],
+                suggestion: "Pass configuration: \"debug\" or \"release\"."
+            )
+        }
+        if let hosts = object["hosts"]?.arrayValue {
+            for value in hosts {
+                guard let raw = value.stringValue else { continue }
+                if HostID(parsing: raw) == nil {
+                    throw Self.unknownHost(raw, key: "hosts", method: method)
+                }
+            }
+        }
+    }
+
+    /// The methods this handler answers. An unknown method is left to `handle`,
+    /// which refuses it as `protocolError` whatever its params look like.
+    private static let methods: Set<String> = [
+        "initialize", "shutdown", "version", "doctor", "project", "apps", "hosts",
+        "devices", "browsers", "config/get", "config/set", "build", "test", "run",
+        "deploy", "size/budgets", "debug/plan", "debug/prepare", "web/stop",
+        "lsp/environment", "lsp/configure", "lsp/clean", "new", "group/releases",
+        "group/create",
+    ]
+
+    private static let stringParameters: Set<String> = [
+        "project", "host", "deviceHost", "application", "configuration", "device",
+        "browser", "architecture", "filter", "suite", "destination",
+        "appsDirectory", "checkout", "minimum", "name",
+    ]
+
+    private static let booleanParameters: Set<String> = [
+        "dryRun", "detach", "prepare", "noBuild", "buildOnly", "inBrowser",
+        "updateExports", "staleOnly", "all",
+    ]
+
+    private static let integerParameters: Set<String> = ["port", "protocolVersion"]
+
+    private static let stringArrayParameters: Set<String> = [
+        "extraArguments", "releases", "hosts",
+    ]
+
+    private static func mistyped(
+        _ key: String, expected: String, method: String
+    ) -> ToolingError {
+        ToolingError.invalidArguments(
+            "Parameter '\(key)' must be \(expected).",
+            context: ["method": method, "parameter": key]
+        )
+    }
+
+    private static func unknownHost(
+        _ value: String, key: String, method: String
+    ) -> ToolingError {
+        ToolingError.invalidArguments(
+            "Parameter '\(key)' names no host: '\(value)'.",
+            context: [
+                "method": method,
+                "hosts": HostID.allCases.map(\.rawValue).joined(separator: ", "),
+            ],
+            suggestion: "Pass one of the hosts `stateui hosts` lists."
+        )
+    }
+
+    /// The operations a client starts and then follows: a plan alone is
     /// immediate, but running one can take minutes and must be cancellable.
     public func isLongRunning(method: String, params: JSONValue?) -> Bool {
         guard params?["dryRun"]?.boolValue != true else { return false }

@@ -5,6 +5,14 @@ import XCTest
 @testable import StateUITooling
 
 final class CoreTests: XCTestCase {
+    /// The tool reports the StateUI release it ships with. A CLI left on 0.7.1
+    /// must not pass silently while the checkout is 0.8.1.
+    func testToolingReportsTheStateUIRelease() {
+        XCTAssertEqual(ToolingVersion.version, "0.8.1")
+        XCTAssertEqual(ToolingVersion.protocolVersion, 1)
+        XCTAssertEqual(ToolingVersion.summary, "stateui 0.8.1 (protocol 1)")
+    }
+
     func testHostParsing() {
         XCTAssertEqual(HostID(parsing: "macOS"), .appKit)
         XCTAssertEqual(HostID(parsing: "ios"), .uiKit)

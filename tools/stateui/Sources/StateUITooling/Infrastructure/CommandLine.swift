@@ -3,6 +3,7 @@
 
 import Foundation
 
+/// The positionals, option values and flags a command line supplied.
 public struct ParsedCommand: Sendable {
     public var positionals: [String]
     public var values: [String: String]
@@ -31,6 +32,7 @@ public struct ParsedCommand: Sendable {
     }
 }
 
+/// Parses the tool's command line, refusing options no command reads.
 public enum CommandLineParser {
     /// Every option that takes a value, and only those some command reads.
     public static let valueOptions: Set<String> = [

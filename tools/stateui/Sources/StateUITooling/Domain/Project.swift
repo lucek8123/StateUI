@@ -3,6 +3,7 @@
 
 import Foundation
 
+/// The optimization a build uses.
 public enum BuildConfiguration: String, Codable, Sendable, CaseIterable, Hashable {
     case debug
     case release
@@ -20,6 +21,7 @@ public enum BuildConfiguration: String, Codable, Sendable, CaseIterable, Hashabl
     }
 }
 
+/// What a discovered directory is: a checkout, a group, an application, or none of them.
 public enum ProjectKind: String, Codable, Sendable {
     case checkout
     case group
@@ -27,6 +29,7 @@ public enum ProjectKind: String, Codable, Sendable {
     case unknown
 }
 
+/// The project a command runs against and the applications it holds.
 public struct ProjectInfo: Codable, Sendable, Hashable {
     public let root: URL
     public let kind: ProjectKind
@@ -98,6 +101,7 @@ public struct ProjectContext: Sendable {
     }
 }
 
+/// One host's entry point in an application.
 public struct ApplicationHead: Codable, Sendable, Hashable {
     public let host: HostID
     public let path: URL
@@ -108,6 +112,7 @@ public struct ApplicationHead: Codable, Sendable, Hashable {
     }
 }
 
+/// An application's manifest, directory and per-host heads.
 public struct Application: Codable, Sendable, Hashable {
     public let name: String
     public let directory: URL

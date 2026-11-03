@@ -3,6 +3,7 @@
 
 import Foundation
 
+/// Checks the native toolchains, SDKs and devices a host needs.
 public struct ToolchainService: Sendable {
     public let runner: CommandRunner
     public let platform: Platform
