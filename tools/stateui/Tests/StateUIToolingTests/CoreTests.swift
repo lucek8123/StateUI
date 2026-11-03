@@ -197,4 +197,21 @@ final class CoreTests: XCTestCase {
         XCTAssertFalse(finding.advice.isEmpty, "a missing toolchain says what to install")
         XCTAssertFalse(gtk.missing.contains { $0.component.hasPrefix("Android") })
     }
+
+    /// A client reads `ready` from the report rather than repeating the rule
+    /// about which findings block a host.
+    func testToolchainReportEncodesItsReadiness() throws {
+        let report = ToolchainReport(
+            platform: Platform(operatingSystem: .linux, architecture: .x86_64),
+            findings: [
+                ToolchainFinding(
+                    component: "Swift", neededBy: [.gtk], status: .found,
+                    advice: "", blocking: true
+                ),
+            ]
+        )
+        let text = try JSON.encode(report)
+        let value = try JSON.decoder().decode(JSONValue.self, from: Data(text.utf8))
+        XCTAssertEqual(value["ready"], .bool(true))
+    }
 }

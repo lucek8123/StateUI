@@ -432,6 +432,16 @@ final class RPCTests: XCTestCase {
         try? input.fileHandleForWriting.close()
         try? output.fileHandleForWriting.close()
     }
+
+    /// A client reads readiness from `doctor` rather than recomputing the rule
+    /// about which findings block a host.
+    func testDoctorReportsReadiness() async throws {
+        let handler = ToolingRPC(tooling: Tooling.fixture(at: root))
+        let result = try await handler.handle(
+            method: "doctor", params: .object(["host": .string("gtk")])
+        )
+        XCTAssertNotNil(result["ready"]?.boolValue)
+    }
 }
 
 /// A handler whose methods report progress and wait, so the server's task

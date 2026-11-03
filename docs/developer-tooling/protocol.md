@@ -78,7 +78,7 @@ application or group path) wherever the CLI takes `--project`.
 | `initialize` | `protocolVersion` | see Lifecycle |
 | `shutdown`, `exit` | - | `null`, or nothing |
 | `version` | - | `name`, `version`, `protocolVersion` |
-| `doctor` | `host` or `hosts` | the toolchain report: per-host findings, `ready` |
+| `doctor` | `host` or `hosts` | the toolchain report: each finding, and `ready` when no blocking finding is missing |
 | `project` | `project` | kind, root, checkout, applications, configuration directory |
 | `apps` | `project` | each application's name, directory, available hosts |
 | `hosts` | `project` | each host with `id`, `label`, `detail`, `platforms`, `capabilities`, `indexDirectory`, `status`, `reason`, `toolchainReady`, `deviceAvailable` |

@@ -85,6 +85,25 @@ public struct ToolchainReport: Codable, Sendable {
         self.findings = findings
     }
 
+    private enum CodingKeys: String, CodingKey {
+        case platform, findings, ready
+    }
+
+    public init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.platform = try container.decode(Platform.self, forKey: .platform)
+        self.findings = try container.decode([ToolchainFinding].self, forKey: .findings)
+    }
+
+    /// `ready` is computed from the findings, but a client reading `doctor`
+    /// should not have to repeat the rule; it is written beside them.
+    public func encode(to encoder: any Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(platform, forKey: .platform)
+        try container.encode(findings, forKey: .findings)
+        try container.encode(ready, forKey: .ready)
+    }
+
     public var missing: [ToolchainFinding] {
         findings.filter { !$0.isSatisfied && $0.blocking }
     }
