@@ -23,10 +23,35 @@ public struct SwiftBuilder: Sendable {
             if FileSystem.isExecutable(url) { return url }
         }
         if let found = runner.which("swift") { return found }
+        for candidate in Self.installedToolchains(environment: environment, platform: platform)
+        where FileSystem.isExecutable(candidate) {
+            return candidate
+        }
         throw ToolingError.toolchainMissing(
             "The Swift compiler was not found.",
             suggestion: "Install Swift 6.4, or set SWIFT_BIN to its executable."
         )
+    }
+
+    /// The toolchains a Windows installer lays under the user's or the machine's programs, whether or not the
+    /// shell that runs the tool has its bin on PATH.
+    private static func installedToolchains(environment: Environment, platform: Platform) -> [URL] {
+        guard platform.operatingSystem == .windows else { return [] }
+        var candidates: [URL] = []
+        let roots = [
+            ("LOCALAPPDATA", "Programs/Swift/Toolchains"),
+            ("ProgramFiles", "Swift/Toolchains"),
+        ]
+        for (variable, relative) in roots {
+            guard let value = environment[variable], !value.isEmpty else { continue }
+            let root = URL(fileURLWithPath: value).appendingPathComponent(relative, isDirectory: true)
+            for toolchain in FileSystem.children(root) {
+                candidates.append(toolchain.appendingPathComponent(
+                    "usr/bin/swift" + platform.executableSuffix
+                ))
+            }
+        }
+        return candidates
     }
 
     public func buildArguments(

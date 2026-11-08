@@ -53,7 +53,8 @@ public struct ToolchainService: Sendable {
     }
 
     private func swiftFinding(hosts: [HostID]) async -> ToolchainFinding {
-        guard let swift = runner.which("swift") ?? (environment["SWIFT_BIN"].map { FileSystem.expand($0) }) else {
+        let builder = SwiftBuilder(runner: runner, environment: environment, platform: platform)
+        guard let swift = try? builder.swift() else {
             return ToolchainFinding(
                 component: "Swift 6.4 or newer", neededBy: hosts, status: .missing,
                 requiredVersion: "6.4", requiredPlatform: platform.description,
@@ -73,19 +74,7 @@ public struct ToolchainService: Sendable {
     }
 
     private func lldbDapFinding(hosts: [HostID]) async -> ToolchainFinding {
-        var candidates: [URL] = []
-        if platform.operatingSystem == .macOS, let xcrun = runner.which("xcrun") {
-            if let path = await runner.output(xcrun, ["--find", "lldb-dap"], label: "xcrun lldb-dap")?
-                .trimmingCharacters(in: .whitespacesAndNewlines), !path.isEmpty {
-                candidates.append(URL(fileURLWithPath: path))
-            }
-        }
-        if let swift = runner.which("swift") {
-            candidates.append(swift.resolvingSymlinksInPath().deletingLastPathComponent()
-                .appendingPathComponent("lldb-dap" + platform.executableSuffix))
-        }
-        if let found = runner.which("lldb-dap") { candidates.append(found) }
-        let executable = candidates.first(where: FileSystem.isExecutable)
+        let executable = await lldbDapExecutable()
         let debugHosts = hosts.filter { $0 != .web }
         return ToolchainFinding(
             component: "lldb-dap", neededBy: debugHosts, status: executable == nil ? .missing : .found,
@@ -94,6 +83,24 @@ public struct ToolchainService: Sendable {
                 ? "Install the Swift toolchain's lldb-dap and put its bin directory on PATH."
                 : ""
         )
+    }
+
+    /// The debug adapter the Swift toolchain carries, from Xcode's path, the toolchain found for builds, or PATH.
+    private func lldbDapExecutable() async -> URL? {
+        var candidates: [URL] = []
+        if platform.operatingSystem == .macOS, let xcrun = runner.which("xcrun") {
+            if let path = await runner.output(xcrun, ["--find", "lldb-dap"], label: "xcrun lldb-dap")?
+                .trimmingCharacters(in: .whitespacesAndNewlines), !path.isEmpty {
+                candidates.append(URL(fileURLWithPath: path))
+            }
+        }
+        let builder = SwiftBuilder(runner: runner, environment: environment, platform: platform)
+        if let swift = try? builder.swift() {
+            candidates.append(swift.resolvingSymlinksInPath().deletingLastPathComponent()
+                .appendingPathComponent("lldb-dap" + platform.executableSuffix))
+        }
+        if let found = runner.which("lldb-dap") { candidates.append(found) }
+        return candidates.first(where: FileSystem.isExecutable)
     }
 
     private func gitFinding(hosts: [HostID]) async -> ToolchainFinding {
@@ -243,35 +250,133 @@ public struct ToolchainService: Sendable {
         var findings: [ToolchainFinding] = []
         let programs = environment["ProgramFiles(x86)"] ?? "C:\\Program Files (x86)"
         let vswhere = URL(fileURLWithPath: programs).appendingPathComponent("Microsoft Visual Studio/Installer/vswhere.exe")
+        let architecture = platform.architecture == .arm64 ? "arm64" : "x64"
+        let component = platform.architecture == .arm64
+            ? "Microsoft.VisualStudio.Component.VC.Tools.ARM64"
+            : "Microsoft.VisualStudio.Component.VC.Tools.x86.x64"
+
         if FileSystem.isExecutable(vswhere) {
-            let component = platform.architecture == .arm64
-                ? "Microsoft.VisualStudio.Component.VC.Tools.ARM64"
-                : "Microsoft.VisualStudio.Component.VC.Tools.x86.x64"
-            let version = await runner.output(vswhere, ["-latest", "-products", "*", "-requires", component, "-property", "installationVersion"], label: "vswhere")?
-                .trimmingCharacters(in: .whitespacesAndNewlines)
+            let version = await runner.output(
+                vswhere, ["-latest", "-products", "*", "-requires", component, "-property", "installationVersion"],
+                label: "vswhere"
+            )?.trimmingCharacters(in: .whitespacesAndNewlines)
+            let path = await runner.output(
+                vswhere, ["-latest", "-products", "*", "-requires", component, "-property", "installationPath"],
+                label: "vswhere"
+            )?.trimmingCharacters(in: .whitespacesAndNewlines)
             findings.append(ToolchainFinding(
                 component: "Visual Studio 2026 with the C++ tools", neededBy: [.winUI],
                 status: version.map { Version.atLeast(Version.first(in: $0) ?? "0", "18") } == true ? .found : .tooOld,
                 version: version, requiredVersion: "18",
                 advice: "Install Visual Studio 2026 with Desktop development with C++."
             ))
+
+            let compiler = path.flatMap { path -> URL? in
+                let root = URL(fileURLWithPath: path).appendingPathComponent("VC/Tools/MSVC", isDirectory: true)
+                let versions = FileSystem.children(root)
+                    .sorted { Version.compare($0.lastPathComponent, $1.lastPathComponent) < 0 }
+                for version in versions.reversed() {
+                    for host in ["Hostx64", "Hostarm64", "Hostx86"] {
+                        let candidate = version.appendingPathComponent("bin/\(host)/\(architecture)/cl.exe")
+                        if FileSystem.isExecutable(candidate) { return candidate }
+                    }
+                }
+                return nil
+            }
+            findings.append(ToolchainFinding(
+                component: "the C++ compiler (cl.exe)", neededBy: [.winUI],
+                status: compiler == nil ? .missing : .found, executable: compiler?.path,
+                advice: "Install the C++ tools for \(architecture) with Visual Studio 2026."
+            ))
+
+            let runtime = path.flatMap { path -> URL? in
+                let root = URL(fileURLWithPath: path).appendingPathComponent("VC/Redist/MSVC", isDirectory: true)
+                let versions = FileSystem.children(root)
+                    .filter { $0.lastPathComponent.range(of: #"^\d+\."#, options: .regularExpression) != nil }
+                    .sorted { Version.compare($0.lastPathComponent, $1.lastPathComponent) < 0 }
+                for version in versions.reversed() {
+                    let directory = version.appendingPathComponent(architecture, isDirectory: true)
+                    for crt in FileSystem.children(directory)
+                    where crt.lastPathComponent.hasPrefix("Microsoft.VC") && crt.lastPathComponent.hasSuffix(".CRT") {
+                        return crt
+                    }
+                }
+                return nil
+            }
+            findings.append(ToolchainFinding(
+                component: "the Visual Studio C++ runtime for deploy", neededBy: [.winUI],
+                status: runtime == nil ? .missing : .found, version: runtime?.lastPathComponent,
+                advice: "Install the C++ runtime for \(architecture) with Visual Studio 2026.", blocking: false
+            ))
+        } else {
+            findings.append(ToolchainFinding(
+                component: "Visual Studio 2026 with the C++ tools", neededBy: [.winUI],
+                status: .missing, requiredVersion: "18",
+                advice: "Install Visual Studio 2026 with Desktop development with C++."
+            ))
         }
+
         let webview = URL(fileURLWithPath: programs).appendingPathComponent("Microsoft/EdgeWebView/Application")
-        let version = FileSystem.children(webview)
+        let webviewVersion = FileSystem.children(webview)
             .filter { $0.lastPathComponent.range(of: #"^\d+\."#, options: .regularExpression) != nil }
             .sorted { Version.compare($0.lastPathComponent, $1.lastPathComponent) < 0 }.last
         findings.append(ToolchainFinding(
             component: "the WebView2 runtime", neededBy: [.winUI],
-            status: version == nil ? .missing : .found, version: version?.lastPathComponent,
+            status: webviewVersion == nil ? .missing : .found, version: webviewVersion?.lastPathComponent,
             advice: "Install the Evergreen WebView2 Runtime."
         ))
-        let windowsSDK = URL(fileURLWithPath: programs).appendingPathComponent("Windows Kits/10/Include")
-        let sdk = FileSystem.children(windowsSDK).first { $0.lastPathComponent.hasPrefix("10.0.26100") }
+
+        let sdkRoot = URL(fileURLWithPath: programs).appendingPathComponent("Windows Kits/10", isDirectory: true)
+        let sdk = FileSystem.children(sdkRoot.appendingPathComponent("Include", isDirectory: true))
+            .first { $0.lastPathComponent.hasPrefix("10.0.26100") }
+        let sdkComplete = sdk.map { sdk in
+            let version = sdk.lastPathComponent
+            return FileSystem.exists(sdkRoot.appendingPathComponent("Lib/\(version)/ucrt/\(architecture)/ucrt.lib"))
+                && FileSystem.exists(sdkRoot.appendingPathComponent("Lib/\(version)/um/\(architecture)/kernel32.lib"))
+                && FileSystem.exists(sdkRoot.appendingPathComponent("bin/\(version)/\(architecture)/rc.exe"))
+        } ?? false
         findings.append(ToolchainFinding(
             component: "the Windows SDK 10.0.26100", neededBy: [.winUI],
-            status: sdk == nil ? .missing : .found, version: sdk?.lastPathComponent,
-            advice: "Install the Windows 11 SDK (10.0.26100) with the Visual Studio Installer."
+            status: sdkComplete ? .found : .missing, version: sdk?.lastPathComponent,
+            advice: "Install the Windows 11 SDK (10.0.26100) for \(architecture) with the Visual Studio Installer."
         ))
+
+        let packageRoot = WinUIPackages.root(environment: environment)
+        let packages = WinUIPackages.projection
+        let missingPackages = packages.filter { package in
+            !FileSystem.exists(
+                packageRoot.appendingPathComponent("\(package.id)/\(package.version)/\(package.id).nuspec")
+            )
+        }
+        findings.append(ToolchainFinding(
+            component: "the WinUI NuGet packages", neededBy: [.winUI],
+            status: missingPackages.isEmpty ? .found : .missing,
+            version: missingPackages.isEmpty
+                ? "\(packages.count) cached"
+                : "\(packages.count - missingPackages.count)/\(packages.count) cached",
+            advice: missingPackages.isEmpty
+                ? ""
+                : "The first WinUI build fetches \(missingPackages.map(\.id).joined(separator: ", ")) from nuget.org.",
+            blocking: false
+        ))
+
+        let lldb = await lldbDapExecutable()
+        var python: String?
+        if let lldb, let output = await runner.output(
+            lldb, ["--check-python"], label: "lldb-dap --check-python"
+        ) {
+            let path = output.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !path.isEmpty { python = path }
+        }
+        findings.append(ToolchainFinding(
+            component: "lldb-dap's Python", neededBy: [.winUI],
+            status: python == nil ? .missing : .found,
+            version: python.map { URL(fileURLWithPath: $0).lastPathComponent }, executable: python,
+            advice: python == nil
+                ? "The Swift installer's Python beside the toolchain was not found; run lldb-dap --check-python."
+                : ""
+        ))
+
         return findings
     }
 
