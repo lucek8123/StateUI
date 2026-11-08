@@ -38,11 +38,17 @@ extension InputTraits {
         var given = options
         switch capitals {
         case .platform: break
-        case .sentences: given[.automaticCapitalizationEnabledKey] = true
-        case .none: given[.automaticCapitalizationEnabledKey] = false
+        case .sentences: given[Self.automaticCapitalizationEnabledKey] = true
+        case .none: given[Self.automaticCapitalizationEnabledKey] = false
         }
         return given
     }
+
+    /// The spelling option macOS 27 names. The macOS 26 SDK has no declaration for
+    /// it, so it is named as the checker names its other options; a checker that does
+    /// not know the key ignores it.
+    static let automaticCapitalizationEnabledKey =
+        NSSpellChecker.OptionKey(rawValue: "AutomaticCapitalizationEnabled")
 }
 
 /// A field standing in a filled box drawn around it: the ring it draws while it holds the keyboard goes round the box,

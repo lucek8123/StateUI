@@ -5,7 +5,7 @@
 import AppKit
 @_spi(Host) @testable import StateUI
 @_spi(Host) @testable import StateUIHost
-@testable import StateUIAppKit
+@_spi(Host) @testable import StateUIAppKit
 import StateUIConformance
 import XCTest
 
@@ -108,7 +108,7 @@ final class AppKitTextFieldViewTests: XCTestCase {
         XCTAssertFalse(editor.isAutomaticSpellingCorrectionEnabled)
         XCTAssertFalse(editor.isAutomaticTextReplacementEnabled)
         XCTAssertFalse(editor.isContinuousSpellCheckingEnabled)
-        XCTAssertEqual(try checking(asked: editor)[.automaticCapitalizationEnabledKey] as? Bool, false)
+        XCTAssertEqual(try checking(asked: editor)[InputTraits.automaticCapitalizationEnabledKey] as? Bool, false)
     }
 
     /// Text starts its sentences in capitals, whatever the user's own setting; the default says nothing of them.
@@ -123,10 +123,10 @@ final class AppKitTextFieldViewTests: XCTestCase {
         apply(view, text: "", traits: InputTraits(spellChecked: true, predicted: true, purpose: .text))
         XCTAssertTrue(window.makeFirstResponder(view.textField))
         let editor = try XCTUnwrap(view.textField.currentEditor() as? NSTextView)
-        XCTAssertEqual(try checking(asked: editor)[.automaticCapitalizationEnabledKey] as? Bool, true)
+        XCTAssertEqual(try checking(asked: editor)[InputTraits.automaticCapitalizationEnabledKey] as? Bool, true)
 
         apply(view, text: "", traits: InputTraits(spellChecked: true, predicted: true, purpose: nil))
-        XCTAssertNil(try checking(asked: editor)[.automaticCapitalizationEnabledKey])
+        XCTAssertNil(try checking(asked: editor)[InputTraits.automaticCapitalizationEnabledKey])
     }
 
     /// The options the text checking an editor runs as the user types is given, as the editor asks its delegate.

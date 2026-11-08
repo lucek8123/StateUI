@@ -123,7 +123,11 @@ final class AppKitGlassView: NSGlassEffectView, AppKitBoxSurface {
         self.tint = tint
         showTint()
         isInteractive = glass.isInteractive
-        if #available(macOS 27, *) { effectIsInteractive = glass.isInteractive }
+        // macOS 27 gives the glass an `effectIsInteractive` property; the macOS 26
+        // SDK has no declaration for it, so it is set through KVC when the class has it.
+        if responds(to: NSSelectorFromString("setEffectIsInteractive:")) {
+            setValue(glass.isInteractive, forKey: "effectIsInteractive")
+        }
     }
 
     /// The tint in the glass while its window stands active, else in what the glass holds: macOS draws an inactive
