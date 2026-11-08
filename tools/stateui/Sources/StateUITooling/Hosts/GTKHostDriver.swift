@@ -53,7 +53,7 @@ public struct GTKHostDriver: HostDriver {
         let executable = bin.appendingPathComponent(application.product(for: id))
         var steps: [ProcessInvocation] = []
         // The executable is written again; a running copy goes first, found by its path.
-        if let pkill = FileSystem.findExecutable("pkill") {
+        if let pkill = FileSystem.findExecutable("pkill", environment: environment) {
             steps.append(HostSupport.run(
                 pkill, ["-f", "^\(executable.path)( |$)"], cwd: application.directory,
                 label: "Stop a running \(application.product(for: id))", allowFailure: true

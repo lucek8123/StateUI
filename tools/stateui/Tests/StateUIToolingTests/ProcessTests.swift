@@ -6,27 +6,37 @@ import XCTest
 @testable import StateUITooling
 
 final class ProcessTests: XCTestCase {
-    private let shell = URL(fileURLWithPath: "/bin/sh")
+    private var shell: URL { URL(fileURLWithPath: TestFixture.shell) }
 
     private static func invocation(
-        _ arguments: [String], capture: Bool = true, label: String = "test"
+        command: String, capture: Bool = true, label: String = "test"
     ) -> ProcessInvocation {
-        ProcessInvocation(
-            executable: URL(fileURLWithPath: "/bin/sh"), arguments: arguments,
-            workingDirectory: URL(fileURLWithPath: "/tmp"),
+        #if os(Windows)
+        let arguments = ["/c", command]
+        #else
+        let arguments = ["-c", command]
+        #endif
+        return ProcessInvocation(
+            executable: URL(fileURLWithPath: TestFixture.shell), arguments: arguments,
+            workingDirectory: FileManager.default.temporaryDirectory,
             label: label, captureOutput: capture
         )
     }
 
     private func invocation(
-        _ arguments: [String], capture: Bool = true, label: String = "test"
+        command: String, capture: Bool = true, label: String = "test"
     ) -> ProcessInvocation {
-        Self.invocation(arguments, capture: capture, label: label)
+        Self.invocation(command: command, capture: capture, label: label)
     }
 
     func testCapturesStandardOutputAndStatus() async throws {
+        #if os(Windows)
+        let command = "<nul set /p=hello& <nul set /p=oops>&2& exit /b 0"
+        #else
+        let command = "printf 'hello'; printf 'oops' >&2; exit 0"
+        #endif
         let result = try await RealProcessExecutor().execute(
-            invocation(["-c", "printf 'hello'; printf 'oops' >&2; exit 0"])
+            invocation(command: command)
         )
         XCTAssertEqual(result.exitCode, 0)
         XCTAssertTrue(result.succeeded)
@@ -35,8 +45,13 @@ final class ProcessTests: XCTestCase {
     }
 
     func testReportsANonZeroExitWithoutThrowing() async throws {
+        #if os(Windows)
+        let command = "<nul set /p=no>&2& exit /b 7"
+        #else
+        let command = "printf 'no' >&2; exit 7"
+        #endif
         let result = try await RealProcessExecutor().execute(
-            invocation(["-c", "printf 'no' >&2; exit 7"])
+            invocation(command: command)
         )
         XCTAssertEqual(result.exitCode, 7)
         XCTAssertFalse(result.succeeded)
@@ -45,8 +60,13 @@ final class ProcessTests: XCTestCase {
 
     func testStreamsOutputWhileCapturingIt() async throws {
         let box = OutputBox()
+        #if os(Windows)
+        let command = "<nul set /p=one& <nul set /p=two>&2& exit /b 0"
+        #else
+        let command = "printf 'one'; printf 'two' >&2"
+        #endif
         let result = try await RealProcessExecutor().execute(
-            invocation(["-c", "printf 'one'; printf 'two' >&2"])
+            invocation(command: command)
         ) { output in
             box.append(output)
         }
@@ -61,8 +81,8 @@ final class ProcessTests: XCTestCase {
 
     func testMissingExecutableIsAStructuredError() async {
         let invocation = ProcessInvocation(
-            executable: URL(fileURLWithPath: "/definitely/not/here"),
-            arguments: [], workingDirectory: URL(fileURLWithPath: "/tmp"), label: "missing"
+            executable: FileManager.default.temporaryDirectory.appendingPathComponent("definitely-not-here"),
+            arguments: [], workingDirectory: FileManager.default.temporaryDirectory, label: "missing"
         )
         do {
             _ = try await RealProcessExecutor().execute(invocation)
@@ -73,9 +93,14 @@ final class ProcessTests: XCTestCase {
     }
 
     func testCancellationTerminatesTheProcess() async throws {
+        #if os(Windows)
+        let command = "ping -n 30 127.0.0.1 >nul"
+        #else
+        let command = "sleep 30"
+        #endif
         let task = Task {
             try await RealProcessExecutor().execute(
-                Self.invocation(["-c", "sleep 30"], label: "sleep")
+                Self.invocation(command: command, label: "sleep")
             )
         }
         try await Task.sleep(nanoseconds: 150_000_000)
@@ -92,7 +117,7 @@ final class ProcessTests: XCTestCase {
         let executor = ScriptedProcessExecutor(
             answers: ["echo": .init(result: ProcessResult(exitCode: 0, standardOutput: "ok"))]
         )
-        let result = try await executor.execute(invocation(["-c", "echo ok"], label: "echo"))
+        let result = try await executor.execute(invocation(command: "echo ok", label: "echo"))
         XCTAssertEqual(result.standardOutput, "ok")
         let recorded = await executor.recorded()
         XCTAssertEqual(recorded.map(\.label), ["echo"])
@@ -103,7 +128,11 @@ final class ProcessTests: XCTestCase {
             fallback: .init(result: ProcessResult(exitCode: 1, standardError: "no"))
         )
         let runner = CommandRunner(executor: executor)
+        #if os(Windows)
+        let output = await runner.output(shell, ["/c", "exit /b 1"], label: "probe")
+        #else
         let output = await runner.output(shell, ["-c", "false"], label: "probe")
+        #endif
         XCTAssertNil(output)
     }
 
@@ -149,9 +178,22 @@ final class ProcessTests: XCTestCase {
     /// this is the path a long test run takes, where the split lands in its last lines.
     func testAProcessWhoseOutputSplitsCharactersReadsBackWhole() async throws {
         let text = String(repeating: "naïve — 🌍 ☕ café ✓ ", count: 400)
+        #if os(Windows)
+        let file = try TestFixture.write(
+            text, to: FileManager.default.temporaryDirectory.appendingPathComponent("wide-\(UUID().uuidString).txt"))
         let result = try await RealProcessExecutor().execute(
-            invocation(["-c", "printf '%s' '\(text)'"], label: "wide output")
+            ProcessInvocation(
+                executable: URL(fileURLWithPath: TestFixture.shell),
+                arguments: ["/c", "type", file.lastPathComponent],
+                workingDirectory: file.deletingLastPathComponent(), label: "wide output",
+                captureOutput: true
+            )
         )
+        #else
+        let result = try await RealProcessExecutor().execute(
+            invocation(command: "printf '%s' '\(text)'", label: "wide output")
+        )
+        #endif
         XCTAssertEqual(result.standardOutput, text)
         XCTAssertTrue(result.succeeded)
     }

@@ -70,7 +70,7 @@ public struct WinUIHostDriver: HostDriver {
             ))
         }
         if let script = tools(in: checkout) {
-            steps.append(run(
+            steps.append(contentsOf: toolSteps(
                 swift: swift, script: script, "projection",
                 ["--projection", projection(of: checkout).path],
                 packages: WinUIPackages.projection, cwd: checkout,
@@ -90,7 +90,7 @@ public struct WinUIHostDriver: HostDriver {
 
         var postSteps: [ProcessInvocation] = []
         if let script = tools(in: checkout) {
-            postSteps.append(run(
+            postSteps.append(contentsOf: toolSteps(
                 swift: swift, script: script, "self-contained",
                 ["--directory", bin.path, "--executable", executable.path,
                  "--architecture", architecture, "--repository", checkout.path],
@@ -125,7 +125,8 @@ public struct WinUIHostDriver: HostDriver {
         let log = application.buildDirectory(for: id).appendingPathComponent("run.log")
         let step = HostSupport.run(
             executable, [], cwd: bin, label: "Run \(application.product(for: id))",
-            environment: context.environment.stateuiVariables, mode: .observe
+            environment: context.environment.stateuiVariables,
+            mode: request.detach ? .background : .observe
         )
         return RunPlan(
             application: application.name, host: id, configuration: request.configuration,
@@ -156,7 +157,7 @@ public struct WinUIHostDriver: HostDriver {
         // The destination runs on a machine with nothing installed: the C++ runtime
         // comes from Visual Studio's redistributable and is laid there explicitly.
         if let script = tools(in: checkout) {
-            postSteps.append(run(
+            postSteps.append(contentsOf: toolSteps(
                 swift: try swiftBuilder.swift(), script: script, "cpp-runtime",
                 ["--directory", destination.path, "--architecture", architecture],
                 packages: [], cwd: checkout, label: "Lay the C++ runtime for \(architecture)"
@@ -220,7 +221,7 @@ public struct WinUIHostDriver: HostDriver {
 
         var steps: [ProcessInvocation] = []
         if let script = tools(in: checkout) {
-            steps.append(run(
+            steps.append(contentsOf: toolSteps(
                 swift: swift, script: script, "projection",
                 ["--projection", projection(of: checkout).path],
                 packages: WinUIPackages.projection, cwd: checkout,
@@ -250,7 +251,7 @@ public struct WinUIHostDriver: HostDriver {
         // dictionary: some fifteen minutes, so they run only on request.
         var postSteps: [ProcessInvocation] = []
         if let script = tools(in: checkout) {
-            postSteps.append(run(
+            postSteps.append(contentsOf: toolSteps(
                 swift: swift, script: script, "self-contained",
                 ["--directory", bin.path,
                  "--executable", bin.appendingPathComponent("StateUIWinUITests-test-runner.exe").path,
@@ -300,16 +301,53 @@ public struct WinUIHostDriver: HostDriver {
         checkout.appendingPathComponent("lib/StateUI/StateUI.WinUI/.projection", isDirectory: true)
     }
 
-    /// One step of the WinUI tool: Swift runs the script, the subcommand says
-    /// what it does, and the pins travel to it as arguments.
-    private func run(
+    /// The steps that run one subcommand of the WinUI tool. Swift runs the
+    /// script where its interpreter mode works; on Windows, where it does not,
+    /// the script is compiled once and the executable runs instead. The pins,
+    /// and the package cache the tool reads, travel to it as arguments.
+    private func toolSteps(
         swift: URL, script: URL, _ subcommand: String, _ arguments: [String],
         packages: [(id: String, version: String)], cwd: URL, label: String
-    ) -> ProcessInvocation {
-        HostSupport.run(
-            swift, [script.path, subcommand] + arguments + WinUIPackages.arguments(packages),
-            cwd: cwd, label: label
+    ) -> [ProcessInvocation] {
+        var toolArguments = [subcommand] + arguments
+        if !packages.isEmpty {
+            toolArguments += ["--nuget", WinUIPackages.root(environment: environment).path]
+        }
+        toolArguments += WinUIPackages.arguments(packages)
+
+        #if os(Windows)
+        // Swift's interpreter mode is not supported on Windows; compile the
+        // tool and run the executable it makes. The tool needs the Swift
+        // runtime of the toolchain that compiled it on its search path.
+        let swiftc = swift.deletingLastPathComponent().appendingPathComponent("swiftc.exe")
+        let tool = FileManager.default.temporaryDirectory
+            .appendingPathComponent("stateui-winui-tools.exe")
+        let compile = HostSupport.run(
+            swiftc, ["-O", "-static", "-o", tool.path, script.path],
+            cwd: cwd, label: "Build the WinUI tool"
         )
+        let toolchain = swift.deletingLastPathComponent()
+            .deletingLastPathComponent().deletingLastPathComponent()
+        let version = toolchain.lastPathComponent
+            .split(separator: "+").first.map(String.init) ?? toolchain.lastPathComponent
+        let runtime = toolchain.deletingLastPathComponent().deletingLastPathComponent()
+            .appendingPathComponent("Runtimes/\(version)/usr/bin", isDirectory: true)
+        var runEnvironment: [String: String] = [:]
+        if FileSystem.isDirectory(runtime) {
+            let path = environment["PATH"] ?? ""
+            runEnvironment["PATH"] = path.isEmpty ? runtime.path : "\(runtime.path);\(path)"
+        }
+        return [
+            compile,
+            HostSupport.run(
+                tool, toolArguments, cwd: cwd, label: label, environment: runEnvironment
+            ),
+        ]
+        #else
+        return [HostSupport.run(
+            swift, [script.path] + toolArguments, cwd: cwd, label: label
+        )]
+        #endif
     }
 
     static func architecture(_ requested: String?, platform: Platform) -> String {

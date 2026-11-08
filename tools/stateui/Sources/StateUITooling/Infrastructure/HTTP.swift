@@ -119,6 +119,7 @@ public struct StaticWebServer: Sendable {
         try FileSystem.write(data, to: factsFile)
     }
 
+    #if !os(Windows)
     private func serve(client: Int32, rootPath: String) {
         defer { close(client) }
         var request = Data()
@@ -181,6 +182,7 @@ public struct StaticWebServer: Sendable {
             }
         }
     }
+    #endif
 
     static func mimeType(_ path: String) -> String {
         switch URL(fileURLWithPath: path).pathExtension.lowercased() {

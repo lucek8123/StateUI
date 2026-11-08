@@ -196,7 +196,7 @@ final class ProjectTests: XCTestCase {
         try TestFixture.makeCheckout(at: root, applications: ["Gallery"], hosts: [.gtk])
         let tooling = Tooling.fixture(
             at: root, executor: ScriptedProcessExecutor(),
-            environment: Environment(["SWIFT_BIN": "/bin/sh"]),
+            environment: Environment(["SWIFT_BIN": TestFixture.shell]),
             platform: Platform(operatingSystem: .linux, architecture: .x86_64)
         )
         let outcome = try await LSPService(tooling: tooling).configure(host: .gtk)
@@ -217,7 +217,7 @@ final class ProjectTests: XCTestCase {
         )
         let tooling = Tooling.fixture(
             at: root, executor: ScriptedProcessExecutor(),
-            environment: Environment(["SWIFT_BIN": "/bin/sh"]),
+            environment: Environment(["SWIFT_BIN": TestFixture.shell]),
             platform: Platform(operatingSystem: .linux, architecture: .x86_64)
         )
         _ = try await LSPService(tooling: tooling).configure(host: .gtk)
@@ -272,3 +272,4 @@ final class ProjectTests: XCTestCase {
         XCTAssertEqual(try tooling.loadConfiguration(tooling.project()).defaultApplication, "Gallery")
     }
 }
+

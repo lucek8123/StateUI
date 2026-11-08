@@ -163,7 +163,7 @@ final class RPCTests: XCTestCase {
         let handler = ToolingRPC(
             tooling: Tooling.fixture(
                 at: root, executor: executor,
-                environment: Environment(["SWIFT_BIN": "/bin/sh"]),
+                environment: Environment(["SWIFT_BIN": TestFixture.shell]),
                 platform: Platform(operatingSystem: .linux, architecture: .x86_64)
             )
         )
@@ -464,3 +464,4 @@ private struct ReportingHandler: RPCHandling {
         return .object(["ok": .bool(true)])
     }
 }
+

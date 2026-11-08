@@ -104,6 +104,28 @@ lay the Windows App SDK beside each executable: nothing of it is installed.
 Studio installed: both deployed builds of a project group's application, ARM64
 and x64, started with no Swift on the search path.
 
+## A Windows x64 machine: Android Views
+
+Last verified 2026-11-08.
+
+| | |
+| --- | --- |
+| Machine | Intel Core i7-11800H, x86_64 |
+| System | Windows 11, build 10.0.26340 |
+| Swift | the swift.org toolchain `swift-6.4.0-RELEASE` (Asserts), x86_64 |
+| Swift SDK | `swift-6.4.1-RELEASE_android` - a patch release of the toolchain's 6.4 line |
+| Android SDK | platform 36, build-tools 36.1.0 (the Android Gradle plugin also installs 36.0.0), platform-tools 37.0.1 |
+| NDK | 30.0.16248370 |
+| JDK | Eclipse Temurin 21.0.12.1 |
+| Gradle | 9.4.1, fetched by the CLI; Android Gradle plugin 9.2.1 |
+| Emulator | Android Emulator 37.2.13; AVD `StateUI`, Android 36 (API 36) Google APIs, x86_64, 1080x2400 |
+| SVG | `resvg` 0.49.0, for the APK's images and adaptive icon |
+| Heads | HelloWorld and Gallery, debug, built and run by the CLI |
+| Tests | the Android host's 489 tests, including conformance and interop, passed on the emulator |
+
+The CLI builds, installs, starts and tests the heads; no `.scripts/Android`
+script is invoked.
+
 ## A Linux machine: GTK 4, Web
 
 Last verified 2026-10-12.

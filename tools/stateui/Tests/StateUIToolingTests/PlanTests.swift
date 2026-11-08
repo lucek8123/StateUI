@@ -13,8 +13,8 @@ final class PlanTests: XCTestCase {
     /// machine happens to have installed. PATH is kept, for what a plan probes: node.
     private var environment: Environment {
         Environment([
-            "SWIFT_BIN": "/bin/sh",
-            "PATH": ProcessInfo.processInfo.environment["PATH"] ?? "",
+            "SWIFT_BIN": TestFixture.shell,
+            "PATH": Environment.current["PATH"] ?? "",
         ])
     }
     private let linux = Platform(operatingSystem: .linux, architecture: .x86_64)
@@ -127,10 +127,9 @@ final class PlanTests: XCTestCase {
     func testGTKBuildStopsARunningHeadAndInstallsTheDesktopsIconAndEntry() async throws {
         let ctx = try context(hosts: [.gtk])
         let bin = root.appendingPathComponent("bin", isDirectory: true)
-        let pkillStub = try TestFixture.write("#!/bin/sh\nexit 0\n", to: bin.appendingPathComponent("pkill"))
-        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: pkillStub.path)
+        try TestFixture.fakeTool(named: "pkill", in: bin)
         let local = Environment([
-            "SWIFT_BIN": "/bin/sh",
+            "SWIFT_BIN": TestFixture.shell,
             "PATH": bin.path,
             "XDG_DATA_HOME": root.appendingPathComponent("xdg", isDirectory: true).path,
         ])
@@ -183,7 +182,7 @@ final class PlanTests: XCTestCase {
         for name in ["mkdir", "sips", "iconutil", "codesign"] {
             try TestFixture.fakeTool(named: name, in: stubs)
         }
-        let local = Environment(["SWIFT_BIN": "/bin/sh", "PATH": stubs.path])
+        let local = Environment(["SWIFT_BIN": TestFixture.shell, "PATH": stubs.path])
         try TestFixture.makeCheckout(at: root, applications: ["Gallery"], hosts: [.appKit])
         try TestFixture.write(
             "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"1\" height=\"1\"/>\n",
@@ -210,7 +209,7 @@ final class PlanTests: XCTestCase {
     /// names nothing: a bundle that shows no custom icon is not a failure, and
     /// naming a file the plan never copied would be.
     func testAppKitBuildNamesNoIconWhenTheToolsAreAbsent() async throws {
-        let local = Environment(["SWIFT_BIN": "/bin/sh", "PATH": ""])
+        let local = Environment(["SWIFT_BIN": TestFixture.shell, "PATH": ""])
         try TestFixture.makeCheckout(at: root, applications: ["Gallery"], hosts: [.appKit])
         let context = try Tooling.fixture(at: root, environment: local, platform: macos).resolve().context
         let driver = AppKitHostDriver(
@@ -233,10 +232,8 @@ final class PlanTests: XCTestCase {
     /// reads the plans; only the steps themselves need Windows.
     private func windowsContext(applications: [String] = ["Gallery"]) throws -> ProjectContext {
         let stubs = root.appendingPathComponent("stubs", isDirectory: true)
-        let taskkill = stubs.appendingPathComponent("taskkill")
-        try TestFixture.write("#!/bin/sh\nexit 0\n", to: taskkill)
-        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: taskkill.path)
-        let local = Environment(["SWIFT_BIN": "/bin/sh", "PATH": stubs.path])
+        try TestFixture.fakeTool(named: "taskkill", in: stubs)
+        let local = Environment(["SWIFT_BIN": TestFixture.shell, "PATH": stubs.path])
         try TestFixture.makeCheckout(at: root, applications: applications, hosts: [.winUI])
         try TestFixture.write(
             "// the WinUI tool\n", to: root.appendingPathComponent("tools/stateui/Support/winui-tools.swift")
@@ -266,18 +263,39 @@ final class PlanTests: XCTestCase {
             context: ctx
         )
 
+        #if os(Windows)
+        XCTAssertEqual(
+            plan.steps.map(\.label),
+            ["Stop a running GalleryWinUI", "Build the WinUI tool",
+             "Generate the C++/WinRT projection", "Build GalleryWinUI (debug)"]
+        )
+        #else
         XCTAssertEqual(
             plan.steps.map(\.label),
             ["Stop a running GalleryWinUI", "Generate the C++/WinRT projection", "Build GalleryWinUI (debug)"]
         )
+        #endif
         let stop = plan.steps[0]
         XCTAssertTrue(stop.allowFailure, "a head that is not running is not an error")
         XCTAssertEqual(stop.arguments, ["/IM", "GalleryWinUI.exe", "/F"])
 
+        #if os(Windows)
+        // Swift's interpreter mode is unsupported on Windows: the tool is compiled first, and the executable runs.
+        let compile = plan.steps[1]
+        XCTAssertEqual(compile.label, "Build the WinUI tool")
+        XCTAssertEqual(compile.executable.lastPathComponent, "swiftc.exe")
+        XCTAssertEqual(Array(compile.arguments.prefix(3)), ["-O", "-static", "-o"])
+        XCTAssertTrue(compile.arguments.contains { $0.hasSuffix("stateui-winui-tools.exe") })
+        XCTAssertTrue(compile.arguments.last?.hasSuffix("tools/stateui/Support/winui-tools.swift") ?? false)
+        let projection = plan.steps[2]
+        XCTAssertEqual(projection.executable.lastPathComponent, "stateui-winui-tools.exe")
+        XCTAssertEqual(projection.arguments.first, "projection")
+        #else
         let projection = plan.steps[1]
-        XCTAssertEqual(projection.executable.path, "/bin/sh")
+        XCTAssertEqual(projection.executable.path, TestFixture.shell)
         XCTAssertTrue(projection.arguments[0].hasSuffix("tools/stateui/Support/winui-tools.swift"))
         XCTAssertEqual(projection.arguments[1], "projection")
+        #endif
         XCTAssertTrue(projection.arguments.contains("--projection"))
         XCTAssertTrue(projection.arguments.contains { $0.hasSuffix("lib/StateUI/StateUI.WinUI/.projection") })
         XCTAssertEqual(projection.arguments.filter { $0 == "--package" }.count, 5)
@@ -285,15 +303,19 @@ final class PlanTests: XCTestCase {
         XCTAssertTrue(projection.arguments.contains("microsoft.web.webview2=1.0.3179.45"))
 
         // The architecture the head is built for travels to the compiler.
-        let build = plan.steps[2]
+        let build = plan.steps.last!
         XCTAssertTrue(build.environment.contains(where: { $0.value == "winui" }), "the manifest reads the host")
         XCTAssertEqual(build.arguments.filter { $0 == "--arch" }.count, 1)
         XCTAssertTrue(build.arguments.contains("x86_64"))
 
         // The SDK is laid by a step, not by copying what a cache happens to hold.
         XCTAssertFalse(plan.actions.contains { $0.source?.path.contains(".nuget") == true })
+        #if os(Windows)
+        XCTAssertEqual(plan.postSteps.map(\.label), ["Build the WinUI tool", "Lay the Windows App SDK beside GalleryWinUI"])
+        #else
         XCTAssertEqual(plan.postSteps.map(\.label), ["Lay the Windows App SDK beside GalleryWinUI"])
-        let laid = plan.postSteps[0]
+        #endif
+        let laid = try XCTUnwrap(plan.postSteps.first(where: { $0.label == "Lay the Windows App SDK beside GalleryWinUI" }))
         XCTAssertTrue(laid.arguments.contains("--directory"))
         XCTAssertTrue(laid.arguments.contains { $0.hasSuffix("GalleryWinUI.exe") })
         XCTAssertTrue(laid.arguments.contains("x64"))
@@ -322,9 +344,14 @@ final class PlanTests: XCTestCase {
             context: ctx, build: nil
         )
 
+        #if os(Windows)
+        XCTAssertEqual(plan.postSteps.map(\.label), ["Build the WinUI tool", "Lay the C++ runtime for x64"])
+        #else
         XCTAssertEqual(plan.postSteps.map(\.label), ["Lay the C++ runtime for x64"])
-        XCTAssertTrue(plan.postSteps[0].arguments.contains(destination.path))
-        XCTAssertTrue(plan.postSteps[0].arguments.contains("--architecture"))
+        #endif
+        let runtime = try XCTUnwrap(plan.postSteps.first(where: { $0.label == "Lay the C++ runtime for x64" }))
+        XCTAssertTrue(runtime.arguments.contains(destination.path))
+        XCTAssertTrue(runtime.arguments.contains("--architecture"))
 
         let copy = try XCTUnwrap(plan.actions.first(where: { $0.kind == .copyTree }))
         for exclusion in [".swiftmodule", ".lib", ".exp", ".pdb", ".objlib", "plutil.exe"] {
@@ -345,19 +372,34 @@ final class PlanTests: XCTestCase {
         let plan = try await driver.testPlan(TestRequest(application: "Gallery", host: .winUI), context: ctx)
         let suite = try XCTUnwrap(plan.suites.first(where: { $0.name.hasSuffix("StateUI.WinUI/Testing") }))
 
+        #if os(Windows)
+        XCTAssertEqual(
+            suite.steps.map(\.label),
+            ["Build the WinUI tool", "Generate the C++/WinRT projection", "Build the WinUI host's tests"]
+        )
+        XCTAssertEqual(
+            suite.postSteps.map(\.label),
+            ["Build the WinUI tool", "Lay the Windows App SDK beside the test runner", "Test the WinUI host"]
+        )
+        #else
         XCTAssertEqual(suite.steps.map(\.label), ["Generate the C++/WinRT projection", "Build the WinUI host's tests"])
         XCTAssertEqual(suite.postSteps.map(\.label), ["Lay the Windows App SDK beside the test runner", "Test the WinUI host"])
+        #endif
+        let laid = try XCTUnwrap(
+            suite.postSteps.first(where: { $0.label == "Lay the Windows App SDK beside the test runner" })
+        )
         XCTAssertTrue(
-            suite.postSteps[0].arguments.contains { $0.hasSuffix("StateUIWinUITests-test-runner.exe") },
+            laid.arguments.contains { $0.hasSuffix("StateUIWinUITests-test-runner.exe") },
             "the runner is laid as a head is"
         )
         XCTAssertFalse(
-            suite.postSteps[0].arguments.contains { $0.lowercased().contains("webview2loader") },
+            laid.arguments.contains { $0.lowercased().contains("webview2loader") },
             "the tool names the loader, the backend's script lays it"
         )
-        XCTAssertTrue(suite.postSteps[1].arguments.contains("--skip-build"))
-        XCTAssertTrue(suite.postSteps[1].arguments.contains("--num-workers"))
-        XCTAssertTrue(suite.postSteps[1].environment.contains(where: { $0.value == "winui" }))
+        let test = try XCTUnwrap(suite.postSteps.first(where: { $0.label == "Test the WinUI host" }))
+        XCTAssertTrue(test.arguments.contains("--skip-build"))
+        XCTAssertTrue(test.arguments.contains("--num-workers"))
+        XCTAssertTrue(test.environment.contains(where: { $0.value == "winui" }))
     }
 
     /// Windows runs WinUI where the toolchain stands; any other operating system

@@ -57,6 +57,25 @@ Anything after `--` is passed to the toolchain beside the application's own name
 | `debug prepare [--application N] [--host H] [--configuration C] [--device ID] [--browser ID] [--dry-run]` | build and launch what the plan names, and write `debugger.json` where the debugger reads it |
 | `rpc --stdio` | JSON-RPC 2.0 server over stdio; see `protocol.md` |
 
+## Host notes
+
+### Android
+
+`stateui doctor --host android` checks the Android SDK (platform 36, build-tools
+and platform-tools), NDK r30 or newer, JDK 21, and the Swift SDK for Android of
+the toolchain's release line; a patch release of the same minor is accepted (for
+example the 6.4.1 SDK with the 6.4.0 compiler). On Windows - and any host without
+AppKit - `resvg` must be on `PATH`; the CLI draws the application's SVGs and
+adaptive icon with it.
+
+`devices --host android` lists attached devices and emulators, a running
+emulator by its AVD name, and AVDs that are stopped. `build`, `run`, `test` and
+`deploy` take `--device`; with one device attached it is implied, and
+`--architecture x86_64|arm64-v8a` builds for a device that is not attached. The
+CLI fetches Gradle 9.4.1 on first use and copies the Swift runtime libraries
+the head needs into the APK. The older `.scripts/Android` shell path is not
+needed.
+
 ## Output and exit codes
 
 `--json` writes the encoded answer to stdout. A refusal is written to stderr as

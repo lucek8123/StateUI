@@ -11,6 +11,13 @@ import XCTest
 final class WebServeTests: XCTestCase {
     private var root: URL!
 
+    /// The server the page is given up through runs on macOS and Linux.
+    private func skipUnlessServedOnThisHost() throws {
+        #if os(Windows)
+        throw XCTSkip("The Web host's server runs on macOS and Linux.")
+        #endif
+    }
+
     override func setUpWithError() throws {
         root = try TestFixture.temporaryDirectory("webserve")
         try TestFixture.makeCheckout(at: root, applications: ["Gallery"], hosts: [.web])
@@ -43,6 +50,7 @@ final class WebServeTests: XCTestCase {
     }
 
     func testStopGivesUpThePageTheFactsName() throws {
+        try skipUnlessServedOnThisHost()
         let child = try spawnHoldingProcess()
         XCTAssertTrue(child.isRunning)
         let file = try factsFile(port: 8460, url: "http://localhost:8460/", pid: Int32(child.processIdentifier))
@@ -53,13 +61,14 @@ final class WebServeTests: XCTestCase {
         XCTAssertEqual(page.pid, Int32(child.processIdentifier))
 
         var waited = 0
-        while child.isRunning && waited < 60 { usleep(50_000); waited += 1 }
+        while child.isRunning && waited < 60 { Thread.sleep(forTimeInterval: 0.05); waited += 1 }
         XCTAssertFalse(child.isRunning, "the process the facts named is still serving")
         XCTAssertFalse(FileManager.default.fileExists(atPath: file.path), "the facts outlived the page")
         child.waitUntilExit()
     }
 
     func testStopRefusesWhenNoPageIsServed() throws {
+        try skipUnlessServedOnThisHost()
         do {
             _ = try WebServerService(tooling: Tooling.fixture(at: root)).stop()
             XCTFail("stop answered when nothing serves a page")
@@ -73,6 +82,7 @@ final class WebServeTests: XCTestCase {
     /// Facts can outlive the process they name - a run killed by other means leaves the
     /// file behind - so the refusal says nothing is listening and takes the file with it.
     func testStopClearsFactsThatNameNoLiveProcess() throws {
+        try skipUnlessServedOnThisHost()
         let file = try factsFile(port: 8460, url: "http://localhost:8460/", pid: 999_999)
 
         do {
@@ -88,6 +98,7 @@ final class WebServeTests: XCTestCase {
     /// Facts written by an older binary name no process, so they cannot be treated as
     /// something stoppable, and are left where the developer can read them.
     func testStopRefusesFactsNamingNoProcess() throws {
+        try skipUnlessServedOnThisHost()
         let file = try factsFile(port: 8460, url: "http://localhost:8460/", pid: nil)
 
         do {
@@ -101,6 +112,7 @@ final class WebServeTests: XCTestCase {
     }
 
     func testRPCStopsTheServedPageAndReportsIt() async throws {
+        try skipUnlessServedOnThisHost()
         let child = try spawnHoldingProcess()
         _ = try factsFile(port: 8461, url: "http://localhost:8461/", pid: Int32(child.processIdentifier))
 
@@ -110,7 +122,7 @@ final class WebServeTests: XCTestCase {
         XCTAssertEqual(result["pid"], JSONValue.int(Int(child.processIdentifier)))
 
         var waited = 0
-        while child.isRunning && waited < 60 { usleep(50_000); waited += 1 }
+        while child.isRunning && waited < 60 { try? await Task.sleep(nanoseconds: 50_000_000); waited += 1 }
         XCTAssertFalse(child.isRunning)
         child.waitUntilExit()
     }

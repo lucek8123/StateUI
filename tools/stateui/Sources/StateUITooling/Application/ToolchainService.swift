@@ -285,7 +285,7 @@ public struct ToolchainService: Sendable {
                 .filter { $0.lowercased().hasSuffix("_wasm") }
                 .filter { id in
                     guard let idVersion = Version.first(in: id) else { return false }
-                    return Version.swiftRelease(in: idVersion) == release
+                    return Version.sameRelease(Version.swiftRelease(in: idVersion) ?? "", release)
                 }.last
             findings.append(ToolchainFinding(
                 component: "the Swift SDK for WebAssembly of Swift's release", neededBy: [.web],

@@ -342,10 +342,12 @@ public struct AndroidHostDriver: HostDriver {
         if let found = toolchain.gradle {
             gradle = found
         } else if installGradle {
-            gradle = try await AndroidToolchain.installGradle(environment: environment, runner: runner)
+            gradle = try await AndroidToolchain.installGradle(
+                environment: environment, platform: platform, runner: runner
+            )
         } else {
             // A plan changes nothing; name where the build would put Gradle.
-            gradle = AndroidToolchain.expectedGradleBinary
+            gradle = AndroidToolchain.expectedGradleBinary(platform: platform)
         }
 
         let application = Application(
@@ -381,6 +383,10 @@ public struct AndroidHostDriver: HostDriver {
             .createDirectory(assets),
             .createDirectory(resourceDirectory.appendingPathComponent("drawable", isDirectory: true)),
             .createDirectory(tools),
+            // A clean build has no product libraries when the plan is made: the build writes them after the
+            // closure was read. Every library the build leaves is packaged, and its unstripped copy kept.
+            .copyMatching(bin, matching: ".so", to: libraries),
+            .copyMatching(bin, matching: ".so", to: symbols),
         ]
         for library in closure {
             actions.append(.copy(library.source, to: symbols.appendingPathComponent(library.name)))
@@ -410,38 +416,97 @@ public struct AndroidHostDriver: HostDriver {
             }
         }
 
-        let rasterizerScriptURL = checkout.appendingPathComponent("tools/stateui/Support/rasterize-images.swift")
-        let rasterizerScript = FileSystem.exists(rasterizerScriptURL) ? rasterizerScriptURL : nil
-        if let compiler = await compiler(), let checkoutScript = rasterizerScript,
-           FileSystem.isDirectory(resources.appendingPathComponent("Images", isDirectory: true)) {
-            let rasterizer = tools.appendingPathComponent("rasterize-images")
-            // After the actions: they create `tools`, where the tool is written.
-            postSteps.append(HostSupport.run(
-                compiler.executable,
-                compiler.prefix + ["-O", checkoutScript.path, "-o", rasterizer.path],
-                cwd: package, label: "Compile the picture rasterizer"
-            ))
-            postSteps.append(HostSupport.run(
-                rasterizer, [resources.appendingPathComponent("Images").path,
-                             assets.appendingPathComponent("images").path],
-                cwd: package, label: "Draw the application's pictures for Android"
-            ))
-        }
+        let images = resources.appendingPathComponent("Images", isDirectory: true)
+        let appIcon = resources.appendingPathComponent("AppIcon", isDirectory: true)
+        if platform.operatingSystem == .macOS {
+            // The AppKit tools draw an SVG with CoreGraphics: three times over, and the icon at each density.
+            let rasterizerScriptURL = checkout.appendingPathComponent("tools/stateui/Support/rasterize-images.swift")
+            let rasterizerScript = FileSystem.exists(rasterizerScriptURL) ? rasterizerScriptURL : nil
+            if let compiler = await compiler(), let checkoutScript = rasterizerScript,
+               FileSystem.isDirectory(images) {
+                let rasterizer = tools.appendingPathComponent("rasterize-images")
+                // After the actions: they create `tools`, where the tool is written.
+                postSteps.append(HostSupport.run(
+                    compiler.executable,
+                    compiler.prefix + ["-O", checkoutScript.path, "-o", rasterizer.path],
+                    cwd: package, label: "Compile the picture rasterizer"
+                ))
+                postSteps.append(HostSupport.run(
+                    rasterizer, [images.path, assets.appendingPathComponent("images").path],
+                    cwd: package, label: "Draw the application's pictures for Android"
+                ))
+            }
 
-        let drawerScriptURL = checkout.appendingPathComponent("tools/stateui/Support/draw-app-icon-android.swift")
-        let drawerScriptPath = FileSystem.exists(drawerScriptURL) ? drawerScriptURL : nil
-        if let compiler = await compiler(), let drawerScript = drawerScriptPath,
-           FileSystem.isDirectory(resources.appendingPathComponent("AppIcon", isDirectory: true)) {
-            let drawer = tools.appendingPathComponent("draw-app-icon")
-            postSteps.append(HostSupport.run(
-                compiler.executable,
-                compiler.prefix + ["-O", drawerScript.path, "-o", drawer.path],
-                cwd: package, label: "Compile the icon drawer"
-            ))
-            postSteps.append(HostSupport.run(
-                drawer, [resources.appendingPathComponent("AppIcon").path, resourceDirectory.path],
-                cwd: package, label: "Draw the application's icon"
-            ))
+            let drawerScriptURL = checkout.appendingPathComponent("tools/stateui/Support/draw-app-icon-android.swift")
+            let drawerScriptPath = FileSystem.exists(drawerScriptURL) ? drawerScriptURL : nil
+            if let compiler = await compiler(), let drawerScript = drawerScriptPath,
+               FileSystem.isDirectory(appIcon) {
+                let drawer = tools.appendingPathComponent("draw-app-icon")
+                postSteps.append(HostSupport.run(
+                    compiler.executable,
+                    compiler.prefix + ["-O", drawerScript.path, "-o", drawer.path],
+                    cwd: package, label: "Compile the icon drawer"
+                ))
+                postSteps.append(HostSupport.run(
+                    drawer, [appIcon.path, resourceDirectory.path],
+                    cwd: package, label: "Draw the application's icon"
+                ))
+            }
+        } else if let resvg = runner.which("resvg") {
+            // Everywhere else, resvg draws the same pictures: an SVG three times over, and the icon at each
+            // density. The adaptive icon's mark stands whole rather than at two thirds of its canvas, which a
+            // launcher still shows as the application's icon.
+            if FileSystem.isDirectory(images) {
+                let target = assets.appendingPathComponent("images", isDirectory: true)
+                actions.append(.remove(target))
+                actions.append(.createDirectory(target))
+                for file in FileSystem.children(images) {
+                    let kind = file.pathExtension.lowercased()
+                    guard ["svg", "png", "jpg", "jpeg", "webp", "gif"].contains(kind) else { continue }
+                    if kind == "svg" {
+                        let name = file.deletingPathExtension().lastPathComponent + "@3x.png"
+                        postSteps.append(HostSupport.run(
+                            resvg, ["-z", "3", file.path, target.appendingPathComponent(name).path],
+                            cwd: package, label: "Draw \(file.lastPathComponent) for Android"
+                        ))
+                    } else {
+                        actions.append(.copy(file, to: target.appendingPathComponent(file.lastPathComponent)))
+                    }
+                }
+            }
+            if FileSystem.isDirectory(appIcon) {
+                let background = appIcon.appendingPathComponent("appicon_bkg.svg")
+                let mark = appIcon.appendingPathComponent("appicon_mark.svg")
+                if FileSystem.exists(background), FileSystem.exists(mark) {
+                    let densities: [(folder: String, scale: Double)] = [
+                        ("mipmap-mdpi", 1), ("mipmap-hdpi", 1.5), ("mipmap-xhdpi", 2),
+                        ("mipmap-xxhdpi", 3), ("mipmap-xxxhdpi", 4),
+                    ]
+                    for (folder, scale) in densities {
+                        let directory = resourceDirectory.appendingPathComponent(folder, isDirectory: true)
+                        actions.append(.createDirectory(directory))
+                        let pixels = Int((108 * scale).rounded())
+                        for (source, name) in [(background, "appicon_background"), (mark, "appicon_foreground")] {
+                            postSteps.append(HostSupport.run(
+                                resvg, ["-w", "\(pixels)", "-h", "\(pixels)", source.path,
+                                        directory.appendingPathComponent("\(name).png").path],
+                                cwd: package, label: "Draw \(name) at \(folder)"
+                            ))
+                        }
+                    }
+                    let anydpi = resourceDirectory.appendingPathComponent("mipmap-anydpi-v26", isDirectory: true)
+                    actions.append(.createDirectory(anydpi))
+                    let adaptive = """
+                        <?xml version="1.0" encoding="utf-8"?>
+                        <adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
+                            <background android:drawable="@mipmap/appicon_background" />
+                            <foreground android:drawable="@mipmap/appicon_foreground" />
+                            <monochrome android:drawable="@mipmap/appicon_foreground" />
+                        </adaptive-icon>
+                        """
+                    actions.append(.write(adaptive, to: anydpi.appendingPathComponent("appicon.xml")))
+                }
+            }
         }
 
         let gradleEnvironment = [
@@ -453,7 +518,7 @@ public struct AndroidHostDriver: HostDriver {
         let gradleArguments = [
             "--project-dir", head.path,
             "--project-cache-dir", out.appendingPathComponent("gradle-project").path,
-            "--console=plain", "--quiet",
+            "--console=plain", "--quiet", "--no-daemon",
             "-Pstateui.build=\(out.appendingPathComponent("gradle").path)",
             "-Pstateui.java=\(checkout.appendingPathComponent("lib/StateUI/StateUI.Android/Java").path)",
             "-Pstateui.libraries=\(out.appendingPathComponent("jniLibs").path)",
@@ -461,8 +526,8 @@ public struct AndroidHostDriver: HostDriver {
             "-Pstateui.res=\(resourceDirectory.path)",
             task,
         ]
-        postSteps.append(ProcessInvocation(
-            executable: gradle, arguments: gradleArguments, environment: gradleEnvironment,
+        postSteps.append(gradleRun(
+            gradle, arguments: gradleArguments, environment: gradleEnvironment,
             workingDirectory: head, label: "Package \(product) with Gradle (\(configuration.rawValue))"
         ))
 
@@ -506,7 +571,26 @@ public struct AndroidHostDriver: HostDriver {
         }
         if let emulator = toolchain.emulator,
            let avds = await runner.output(emulator, ["-list-avds"], label: "emulator -list-avds") {
-            let running = Set(found.filter { $0.kind == .emulator }.map(\.name))
+            var running = Set<String>()
+            // A running emulator's serial names its model, not the AVD: ask it which AVD it is, so the AVD it
+            // was started from is not listed again as stopped.
+            for index in found.indices where found[index].kind == .emulator {
+                guard let output = await runner.output(
+                    toolchain.adb, ["-s", found[index].id, "emu", "avd", "name"],
+                    label: "adb emu avd name"
+                ) else { continue }
+                let name = output.split(whereSeparator: \.isNewline)
+                    .map { $0.trimmingCharacters(in: .whitespaces) }
+                    .first { !$0.isEmpty && $0 != "OK" }
+                guard let name else { continue }
+                running.insert(name)
+                let device = found[index]
+                found[index] = Device(
+                    id: device.id, name: name, host: device.host, kind: device.kind,
+                    platform: device.platform, osVersion: device.osVersion, state: device.state,
+                    architecture: device.architecture, isAvailable: device.isAvailable
+                )
+            }
             for name in avds.split(whereSeparator: \.isNewline).map(String.init)
             where !name.isEmpty && !running.contains(name) {
                 found.append(Device(
@@ -560,12 +644,40 @@ public struct AndroidHostDriver: HostDriver {
         return abi
     }
 
+    /// Gradle's Windows launcher is a batch file, which must be run by the command interpreter.
+    private func gradleRun(
+        _ gradle: URL, arguments: [String], environment: [String: String],
+        workingDirectory: URL, label: String
+    ) -> ProcessInvocation {
+        let suffix = gradle.pathExtension.lowercased()
+        if platform.operatingSystem == .windows, suffix == "bat" || suffix == "cmd" {
+            let comspec = self.environment["COMSPEC"]
+                ?? "C:\\Windows\\System32\\cmd.exe"
+            return ProcessInvocation(
+                executable: URL(fileURLWithPath: comspec),
+                arguments: ["/c", gradle.path] + arguments,
+                environment: environment, workingDirectory: workingDirectory, label: label
+            )
+        }
+        return ProcessInvocation(
+            executable: gradle, arguments: arguments,
+            environment: environment, workingDirectory: workingDirectory, label: label
+        )
+    }
+
     /// The host compiler for the repository's own support tools. On macOS `xcrun
     /// swiftc` is used rather than the toolchain's absolute path: xcrun gives the
     /// compiler the SDK it needs, where a bare `swiftc` may not find one.
     private func compiler() async -> (executable: URL, prefix: [String])? {
         if platform.operatingSystem == .macOS, let xcrun = runner.which("xcrun") {
             return (xcrun, ["swiftc"])
+        }
+        // The sibling of the Swift compiler every other build uses.
+        let builder = SwiftBuilder(runner: runner, environment: environment, platform: platform)
+        if let swift = try? builder.swift() {
+            let swiftc = swift.deletingLastPathComponent()
+                .appendingPathComponent("swiftc" + platform.executableSuffix)
+            if FileSystem.isExecutable(swiftc) { return (swiftc, []) }
         }
         if let swiftc = runner.which("swiftc") { return (swiftc, []) }
         return nil
@@ -610,10 +722,23 @@ public struct AndroidHostDriver: HostDriver {
             if let found = firstAPK(in: candidate) { return found }
         }
         if let candidate, FileSystem.exists(candidate) { return candidate }
-        let app = package.lastPathComponent
+        // Gradle names the APK after its root project, which is not always the folder's name (`Tests` is
+        // `StateUIAndroidTests`).
+        let app = gradleProjectName(package) ?? package.lastPathComponent
         return package.appendingPathComponent(
             ".build/android/gradle/outputs/apk/\(configuration.rawValue)/\(app)-\(configuration.rawValue).apk"
         )
+    }
+
+    private func gradleProjectName(_ package: URL) -> String? {
+        let settings = package.appendingPathComponent("Platforms/Android/settings.gradle.kts")
+        guard let text = try? FileSystem.read(settings),
+              let range = text.range(
+                of: #"rootProject\.name\s*=\s*"([^"]+)""#, options: .regularExpression
+              ) else { return nil }
+        let match = String(text[range])
+        guard let value = match.range(of: #""([^"]+)""#, options: .regularExpression) else { return nil }
+        return String(match[value]).trimmingCharacters(in: CharacterSet(charactersIn: "\""))
     }
 
     private func firstAPK(in directory: URL) -> URL? {

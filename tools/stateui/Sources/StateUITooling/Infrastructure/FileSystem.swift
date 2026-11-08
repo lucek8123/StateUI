@@ -23,7 +23,8 @@ public enum FileSystem {
     }
 
     public static func isExecutable(_ url: URL) -> Bool {
-        manager.isExecutableFile(atPath: url.path)
+        // Windows answers an executable for a `.bat`/`.cmd` path that does not exist; a tool is only where it is.
+        manager.fileExists(atPath: url.path) && manager.isExecutableFile(atPath: url.path)
     }
 
     public static func read(_ url: URL) throws -> String {

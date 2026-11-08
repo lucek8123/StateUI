@@ -101,7 +101,11 @@ public struct AndroidPackaging: Sendable {
             at: toolchain.swiftSDKBundle, includingPropertiesForKeys: [.isRegularFileKey]
         ) else { return nil }
         for case let url as URL in enumerator where url.lastPathComponent == "libswiftCore.so" {
-            if url.path.contains("/\(architecture)") { return url.deletingLastPathComponent() }
+            // The SDK names the architecture's directory `swift-x86_64` or `swift-aarch64`, not `x86_64`.
+            let path = url.path.replacingOccurrences(of: "\\", with: "/")
+            if path.contains("/swift-\(architecture)/") || path.contains("/swift_static-\(architecture)/") {
+                return url.deletingLastPathComponent()
+            }
         }
         return nil
     }

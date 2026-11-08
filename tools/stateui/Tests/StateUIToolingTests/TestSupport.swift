@@ -24,10 +24,29 @@ enum TestFixture {
     /// environment rather than from beside the checkout.
     @discardableResult
     static func fakeTool(named name: String, in directory: URL, contents: String = "#!/bin/sh\nexit 0\n") throws -> URL {
+        #if os(Windows)
+        // A PATH search on Windows looks for the executable suffix, and a file with that suffix must be an
+        // executable; the tests that plan never run this stand-in.
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let url = directory.appendingPathComponent(name + ".exe")
+        if FileManager.default.fileExists(atPath: url.path) { try FileManager.default.removeItem(at: url) }
+        try FileManager.default.copyItem(at: URL(fileURLWithPath: shell), to: url)
+        return url
+        #else
         let url = directory.appendingPathComponent(name)
         try write(contents, to: url)
         try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: url.path)
         return url
+        #endif
+    }
+
+    /// A command interpreter that stands on every machine: the POSIX shell, or Windows' own.
+    static var shell: String {
+        #if os(Windows)
+        return ProcessInfo.processInfo.environment["COMSPEC"] ?? "C:\\Windows\\System32\\cmd.exe"
+        #else
+        return "/bin/sh"
+        #endif
     }
 
     @discardableResult

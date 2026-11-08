@@ -121,7 +121,7 @@ public struct SwiftBuilder: Sendable {
             .filter { $0.lowercased().hasSuffix("_\(family)") }
             .filter { id in
                 guard let version = Version.first(in: id) else { return false }
-                return Version.swiftRelease(in: version) == release
+                return Version.sameRelease(Version.swiftRelease(in: version) ?? "", release)
             }
             .last
     }

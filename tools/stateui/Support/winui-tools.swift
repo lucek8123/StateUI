@@ -189,11 +189,16 @@ func run(_ executable: String, _ arguments: [String]) throws -> Int32 {
 }
 
 /// A native tool run to completion, and what it printed.
-func capture(_ executable: String, _ arguments: [String]) throws -> String {
+func capture(_ executable: String, _ arguments: [String], environment: [String: String]? = nil) throws -> String {
     let pipe = Pipe()
     let process = Process()
     process.executableURL = URL(fileURLWithPath: executable)
     process.arguments = arguments
+    if let environment {
+        var merged = ProcessInfo.processInfo.environment
+        for (key, value) in environment { merged[key] = value }
+        process.environment = merged
+    }
     process.standardOutput = pipe
     try process.run()
     let printed = pipe.fileHandleForReading.readDataToEndOfFile()
@@ -205,7 +210,15 @@ func capture(_ executable: String, _ arguments: [String]) throws -> String {
 /// A tool of the machine's, found on the search path - Windows separates it
 /// with `;`, every other system with `:`.
 func found(_ names: [String]) -> String? {
-    let path = ProcessInfo.processInfo.environment["PATH"] ?? ""
+    #if os(Windows)
+    let names = names.flatMap { [$0, "\($0).exe"] }
+    #endif
+    let environment = ProcessInfo.processInfo.environment
+    #if os(Windows)
+    let path = environment["Path"] ?? environment["PATH"] ?? ""
+    #else
+    let path = environment["PATH"] ?? ""
+    #endif
     for directory in path.split(whereSeparator: { $0 == ":" || $0 == ";" }) {
         for name in names {
             let candidate = URL(fileURLWithPath: String(directory)).appendingPathComponent(name)
@@ -291,9 +304,19 @@ func json(_ data: Data) throws -> [String: Any] {
 func sha512Base64(of file: URL) throws -> String {
     let printed: String
     if let shell = powerShell() {
+        #if os(Windows)
+        // Windows PowerShell may otherwise pick up PowerShell 7's incompatible
+        // utility module, where `Get-FileHash` is not loaded.
+        let environment = shell.lowercased().contains("windowspowershell")
+            ? ["PSModulePath": "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\Modules"]
+            : nil
+        #else
+        let environment: [String: String]? = nil
+        #endif
         printed = try capture(
             shell, ["-NonInteractive", "-NoProfile", "-Command",
-                    "Write-Output (Get-FileHash -Algorithm SHA512 -LiteralPath '\(singleQuoted(file.path))'.Hash)"]
+                    "Write-Output ((Get-FileHash -Algorithm SHA512 -LiteralPath '\(singleQuoted(file.path))').Hash)"],
+            environment: environment
         )
     } else if let digest = found(["sha512sum", "sha512"]) {
         printed = try capture(digest, [file.path])
@@ -312,7 +335,7 @@ func sha512Base64(of file: URL) throws -> String {
     var bytes: [UInt8] = []
     var read = digits.startIndex
     while read < digits.endIndex {
-        let next = digits.index(after: read)
+        let next = digits.index(read, offsetBy: 2)
         guard let byte = UInt8(digits[read..<next], radix: 16) else {
             fail("the SHA-512 of \(file.path) was read as hex that is not hex.")
         }
@@ -404,6 +427,8 @@ struct Fragment {
 final class FragmentReader: NSObject, XMLParserDelegate {
     private var server: Fragment.Server?
     private var stub: Fragment.Stub?
+    private var path = ""
+    private var collectingPath = false
     private(set) var read = Fragment()
 
     /// The name without its prefix: a fragment names everything under `m:`.
@@ -424,6 +449,10 @@ final class FragmentReader: NSObject, XMLParserDelegate {
             stub = Fragment.Stub(
                 path: attributeDict["Path"] ?? "", clsid: attributeDict["ClassId"] ?? "", interfaces: []
             )
+        case "Path":
+            // The fragments name the file in a child element, not an attribute.
+            collectingPath = true
+            path = ""
         case "ActivatableClass":
             if var held = server {
                 held.classes.append(attributeDict["ActivatableClassId"] ?? "")
@@ -438,11 +467,21 @@ final class FragmentReader: NSObject, XMLParserDelegate {
         }
     }
 
+    func parser(_ parser: XMLParser, foundCharacters string: String) {
+        if collectingPath { path += string }
+    }
+
     func parser(
         _ parser: XMLParser, didEndElement elementName: String, namespaceURI: String?,
         qualifiedName qName: String?
     ) {
         switch local(elementName, qName) {
+        case "Path":
+            let value = path.trimmingCharacters(in: .whitespacesAndNewlines)
+            if var held = server { held.path = value; server = held }
+            if var held = stub { held.path = value; stub = held }
+            collectingPath = false
+            path = ""
         case "InProcessServer":
             if let held = server, !held.path.isEmpty { read.servers.append(held) }
             server = nil

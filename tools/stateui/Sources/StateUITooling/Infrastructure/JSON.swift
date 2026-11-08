@@ -54,6 +54,14 @@ public enum Version {
         compare(version, minimum) >= 0
     }
 
+    /// Whether two releases stand on the same major.minor line: `6.4` and `6.4.1` are the same release.
+    public static func sameRelease(_ lhs: String, _ rhs: String) -> Bool {
+        let left = lhs.split(separator: ".").compactMap { Int($0) }
+        let right = rhs.split(separator: ".").compactMap { Int($0) }
+        guard left.count >= 2, right.count >= 2 else { return lhs == rhs }
+        return left[0] == right[0] && left[1] == right[1]
+    }
+
     /// Swift's release as the SDK ids name it: `6.4` for `6.4.0`.
     public static func swiftRelease(in text: String) -> String? {
         let version = text.range(of: #"Swift version (\d+\.\d+(?:\.\d+)?)"#, options: .regularExpression)

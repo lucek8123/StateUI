@@ -318,6 +318,17 @@ classes and `resources.pri` stand beside the executable. `-Detach` returns once
 the application has started. Every `STATEUI_` variable of the shell that runs
 it - `STATEUI_TALLY=1`, `STATEUI_INSPECT=1` - reaches the application.
 
+The `stateui` CLI does the same without the PowerShell scripts:
+
+```powershell
+stateui build Gallery --host winui
+stateui run Gallery --host winui --no-build --detach
+```
+
+On Windows, where Swift's script mode is unsupported, the CLI compiles
+`tools/stateui/Support/winui-tools.swift` once with `swiftc` and runs the
+executable for the projection and the self-contained laying.
+
 Keep an application's folder near the root of a drive: the Swift compiler on
 Windows fails with "the filename or extension is too long" under a deep path.
 
