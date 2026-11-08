@@ -38,3 +38,6 @@ CLAUDE.md
 CLAUDE.md.lnk
 AGENTS.md
 AGENTS.md.lnk
+
+# StateUI developer selections
+.stateui/local.json
