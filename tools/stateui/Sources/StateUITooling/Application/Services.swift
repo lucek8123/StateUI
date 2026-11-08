@@ -351,7 +351,7 @@ public struct LSPService: Sendable {
             host: resolvedHost, packagePath: application.directory.path, indexDirectory: index.path,
             binPath: bin.path, command: [swift.path] + arguments,
             environment: env.environment,
-            notes: env.notes + ["The index lives at \(index.path); removing it is `stateui lsp clean --host \(resolvedHost.rawValue)."]
+            notes: env.notes + ["The index lives at \(index.path); removing it is `stateui lsp clean --host \(resolvedHost.rawValue)`."]
         )
         return (workspace, plan)
     }
@@ -362,7 +362,7 @@ public struct LSPService: Sendable {
         let (workspace, plan) = try await indexPlan(host: host, project: project)
         let settings = URL(fileURLWithPath: workspace.project.root.path).appendingPathComponent(".vscode/settings.json")
         let existing = FileSystem.exists(settings) ? try FileSystem.read(settings) : nil
-        let contents = hostSettings(existing: existing)
+        let contents = Self.settings(existing: existing)
         let step = ProcessInvocation(
             executable: URL(fileURLWithPath: plan.command[0]), arguments: Array(plan.command.dropFirst()),
             environment: plan.environment, workingDirectory: URL(fileURLWithPath: plan.packagePath),
@@ -424,18 +424,160 @@ public struct LSPService: Sendable {
     /// Which host and application are being indexed is the checkout's own selection, in
     /// `.stateui/config.json`; the editors read that from the tool, not from a settings file
     /// the tool writes, so nothing naming a host or an application goes in here.
-    private func hostSettings(existing: String?) -> String {
-        var document: [String: Any] = [:]
-        if let existing, let data = existing.data(using: .utf8),
-           let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
-            document = object
-        }
-        document["search.exclude"] = [
+    static func settings(existing: String?) -> String {
+        let exclude: [String: Any] = [
             "**/.build": true, "**/.swiftpm": true, "**/artifacts": true,
             "**/node_modules": true, "**/dist": true, "**/out": true,
         ]
-        let data = (try? JSONSerialization.data(withJSONObject: document, options: [.prettyPrinted, .sortedKeys])) ?? Data()
+        guard let existing, !existing.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            return Self.prettyJSON(["search.exclude": exclude])
+        }
+        // A plain JSON file is merged and written back as it was. An editor's
+        // settings file usually carries comments - VS Code reads JSONC - and
+        // re-serializing it would delete every one of them, so such a file is
+        // edited in place instead.
+        if let data = existing.data(using: .utf8),
+           let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+            var document = object
+            document["search.exclude"] = exclude
+            return Self.prettyJSON(document)
+        }
+        return merging(exclude, into: existing)
+    }
+
+    /// Puts `search.exclude` into a JSONC document without rewriting what stands
+    /// around it: the member is replaced where it already exists, else inserted
+    /// before the document's closing brace.
+    private static func merging(_ exclude: [String: Any], into text: String) -> String {
+        let value = Self.prettyJSON(exclude)
+        if let range = JSONCScanner.valueRange(of: "search.exclude", in: text) {
+            return text.replacingCharacters(in: range, with: value)
+        }
+        guard let close = text.lastIndex(where: { !$0.isWhitespace }), text[close] == "}" else {
+            return Self.prettyJSON(["search.exclude": exclude])
+        }
+        let member = "  \"search.exclude\" : " + value.replacingOccurrences(of: "\n", with: "\n  ")
+        let prefix = String(text[..<close]).trimmingCharacters(in: .whitespacesAndNewlines)
+        let comma = prefix.hasSuffix("{") || prefix.hasSuffix(",") ? "" : ","
+        return prefix + comma + "\n" + member + "\n" + String(text[close...])
+    }
+
+    private static func prettyJSON(_ object: [String: Any]) -> String {
+        let data = (try? JSONSerialization.data(withJSONObject: object, options: [.prettyPrinted, .sortedKeys]))
+            ?? Data()
         return String(data: data, encoding: .utf8) ?? "{}"
+    }
+}
+
+/// Finds a member's value in a JSON-with-comments document, without decoding or
+/// rewriting the document, so comments and formatting survive a settings write.
+private enum JSONCScanner {
+    static func valueRange(of key: String, in text: String) -> Range<String.Index>? {
+        let characters = Array(text)
+        var index = 0
+        while index < characters.count {
+            skipTrivia(characters, &index)
+            guard index < characters.count else { return nil }
+            guard characters[index] == "\"" else {
+                index += 1
+                continue
+            }
+            guard let name = readString(characters, &index) else { return nil }
+            guard name == key else { continue }
+            skipTrivia(characters, &index)
+            guard index < characters.count, characters[index] == ":" else { continue }
+            index += 1
+            skipTrivia(characters, &index)
+            guard index < characters.count else { return nil }
+            let valueStart = index
+            guard let end = endOfValue(characters, &index) else { return nil }
+            return text.index(text.startIndex, offsetBy: valueStart)..<text.index(text.startIndex, offsetBy: end)
+        }
+        return nil
+    }
+
+    private static func skipTrivia(_ characters: [Character], _ index: inout Int) {
+        while index < characters.count {
+            if characters[index].isWhitespace {
+                index += 1
+                continue
+            }
+            if characters[index] == "/", index + 1 < characters.count, characters[index + 1] == "/" {
+                index += 2
+                while index < characters.count, characters[index] != "\n" { index += 1 }
+                continue
+            }
+            if characters[index] == "/", index + 1 < characters.count, characters[index + 1] == "*" {
+                index += 2
+                while index + 1 < characters.count, !(characters[index] == "*" && characters[index + 1] == "/") {
+                    index += 1
+                }
+                index = min(index + 2, characters.count)
+                continue
+            }
+            break
+        }
+    }
+
+    private static func readString(_ characters: [Character], _ index: inout Int) -> String? {
+        guard index < characters.count, characters[index] == "\"" else { return nil }
+        index += 1
+        var value = ""
+        while index < characters.count {
+            let character = characters[index]
+            if character == "\\" {
+                index += 1
+                if index < characters.count {
+                    value.append(characters[index])
+                    index += 1
+                }
+                continue
+            }
+            if character == "\"" {
+                index += 1
+                return value
+            }
+            value.append(character)
+            index += 1
+        }
+        return nil
+    }
+
+    /// Advances `index` past one JSON value and answers where it ended.
+    private static func endOfValue(_ characters: [Character], _ index: inout Int) -> Int? {
+        guard index < characters.count else { return nil }
+        if characters[index] == "\"" {
+            return readString(characters, &index) == nil ? nil : index
+        }
+        if characters[index] == "{" || characters[index] == "[" {
+            let open = characters[index]
+            let close: Character = open == "{" ? "}" : "]"
+            var depth = 0
+            while index < characters.count {
+                skipTrivia(characters, &index)
+                guard index < characters.count else { return nil }
+                if characters[index] == "\"" {
+                    guard readString(characters, &index) != nil else { return nil }
+                    continue
+                }
+                if characters[index] == open {
+                    depth += 1
+                } else if characters[index] == close {
+                    depth -= 1
+                    index += 1
+                    if depth == 0 { return index }
+                    continue
+                }
+                index += 1
+            }
+            return nil
+        }
+        let start = index
+        while index < characters.count,
+              characters[index] != ",", characters[index] != "}", characters[index] != "]" {
+            index += 1
+        }
+        return index > start ? index : nil
     }
 }
 
@@ -483,16 +625,7 @@ public struct SizeService: Sendable {
                 suggestion: "Measure the Web host: `stateui size budgets --host web`."
             )
         }
-        let project = try tooling.project(explicit: project)
-        let file = project.root.appendingPathComponent(".scripts/Web/size-budgets.sh")
-        guard FileSystem.exists(file) else {
-            throw ToolingError.projectNotFound(
-                "The repository records no Web size budgets at \(file.path).",
-                suggestion: "Add an entry to the budgets array there."
-            )
-        }
-        let text = try FileSystem.read(file)
-        let recorded = try Self.parseSizeBudgets(text)
+        let (project, recorded) = try recordedBudgets(project)
         guard let gzip = FileSystem.findExecutable("gzip", environment: tooling.environment) else {
             throw ToolingError.toolchainMissing(
                 "gzip was not found, so a module could not be weighed the way a page fetches it.",
@@ -534,6 +667,53 @@ public struct SizeService: Sendable {
             )
         }
         return SizeReport(host: .web, configuration: configuration, budgets: measured)
+    }
+
+    /// What a measurement would build and weigh, for `--dry-run` and the RPC's
+    /// `dryRun: true`: planning runs nothing.
+    public func plan(
+        host: HostID, configuration: BuildConfiguration = .release, project explicit: URL? = nil
+    ) async throws -> SizePlan {
+        guard host == .web else {
+            throw ToolingError.unsupportedHost(
+                "\(host.label) ships nothing a page downloads, so it has no size to hold.",
+                suggestion: "Measure the Web host: `stateui size budgets --host web`."
+            )
+        }
+        let (project, recorded) = try recordedBudgets(explicit)
+        var entries: [SizePlan.Entry] = []
+        for (application, budget) in recorded.sorted(by: { $0.key < $1.key }) {
+            let (workspace, build) = try await BuildService(tooling: tooling).plan(
+                BuildRequest(application: application, host: .web, configuration: configuration),
+                project: project.root
+            )
+            guard let app = workspace.application else {
+                throw ToolingError.applicationNotFound(
+                    "\(application) is not an application of this repository.",
+                    context: ["applications": project.applications.map(\.name).joined(separator: ", ")]
+                )
+            }
+            let module = app.buildDirectory(for: .web)
+                .appendingPathComponent("site", isDirectory: true)
+                .appendingPathComponent(configuration.rawValue, isDirectory: true)
+                .appendingPathComponent("\(app.product(for: .web)).wasm")
+            entries.append(
+                SizePlan.Entry(application: application, module: module, budget: budget, build: build)
+            )
+        }
+        return SizePlan(host: .web, configuration: configuration, budgets: entries)
+    }
+
+    private func recordedBudgets(_ explicit: URL?) throws -> (ProjectInfo, [String: Int]) {
+        let project = try tooling.project(explicit: explicit)
+        let file = project.root.appendingPathComponent(".scripts/Web/size-budgets.sh")
+        guard FileSystem.exists(file) else {
+            throw ToolingError.projectNotFound(
+                "The repository records no Web size budgets at \(file.path).",
+                suggestion: "Add an entry to the budgets array there."
+            )
+        }
+        return (project, try Self.parseSizeBudgets(try FileSystem.read(file)))
     }
 
     /// The module gzipped at level nine with no name or timestamp in the stream. The

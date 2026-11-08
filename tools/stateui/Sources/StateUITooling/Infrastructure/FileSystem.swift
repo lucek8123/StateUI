@@ -3,9 +3,15 @@
 
 import Foundation
 
+#if canImport(Darwin)
+import Darwin
+#elseif canImport(Glibc)
+import Glibc
+#endif
+
 /// Small, testable file-system operations used throughout the tool.
 public enum FileSystem {
-    public static let manager = FileManager.default
+    nonisolated(unsafe) public static let manager = FileManager.default
 
     public static func exists(_ url: URL) -> Bool {
         manager.fileExists(atPath: url.path)
@@ -77,8 +83,12 @@ public enum FileSystem {
     }
 
     public static func relativePath(from base: URL, to target: URL) -> String {
-        let baseParts = base.standardizedFileURL.pathComponents
-        let targetParts = target.standardizedFileURL.pathComponents
+        // Symlinks are resolved first: macOS's /var and /tmp are links into
+        // /private, and a relative path counted over the link's spelling points
+        // at a directory that does not exist. `realpath` is used because
+        // Foundation's `resolvingSymlinksInPath` leaves /var as /var on macOS.
+        let baseParts = canonical(base).pathComponents
+        let targetParts = canonical(target).pathComponents
         var common = 0
         while common < min(baseParts.count, targetParts.count), baseParts[common] == targetParts[common] {
             common += 1
@@ -86,6 +96,18 @@ public enum FileSystem {
         let up = Array(repeating: "..", count: baseParts.count - common)
         let down = targetParts.dropFirst(common)
         return (up + down).joined(separator: "/")
+    }
+
+    /// The path with every symlink resolved, as the kernel sees it. Foundation's
+    /// own resolver leaves macOS's root-level `/var` and `/tmp` links unresolved.
+    private static func canonical(_ url: URL) -> URL {
+        #if canImport(Darwin) || canImport(Glibc)
+        var buffer = [CChar](repeating: 0, count: Int(PATH_MAX))
+        if realpath(url.path, &buffer) != nil {
+            return URL(fileURLWithPath: String(cString: buffer))
+        }
+        #endif
+        return url.standardizedFileURL
     }
 
     public static func expand(_ path: String, home: URL = FileManager.default.homeDirectoryForCurrentUser) -> URL {

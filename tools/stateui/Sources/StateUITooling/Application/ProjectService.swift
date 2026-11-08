@@ -57,6 +57,13 @@ public struct ProjectService: Sendable {
                 )
             }
         }
+        if device != nil, deviceHost == nil {
+            throw ToolingError.invalidArguments(
+                "A device belongs to a host.",
+                context: ["device": device ?? ""],
+                suggestion: "Pass --host H (or --device-host H) beside --device."
+            )
+        }
         try tooling.configurationService.saveLocal(root: project.root) { local in
             if let host { local.defaultHost = host }
             if let application { local.defaultApplication = application }

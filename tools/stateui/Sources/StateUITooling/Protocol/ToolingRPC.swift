@@ -392,6 +392,12 @@ public struct ToolingRPC: RPCHandling {
         let host = params?["host"]?.stringValue.flatMap(HostID.init(parsing:)) ?? .web
         let configuration = params?["configuration"]?.stringValue
             .flatMap(BuildConfiguration.init(parsing:)) ?? .release
+        if params?["dryRun"]?.boolValue == true {
+            let plan = try await SizeService(tooling: tooling).plan(
+                host: host, configuration: configuration, project: projectURL(params)
+            )
+            return try JSONValue(plan)
+        }
         let report = try await SizeService(tooling: tooling).budgets(
             host: host, configuration: configuration, project: projectURL(params)
         )

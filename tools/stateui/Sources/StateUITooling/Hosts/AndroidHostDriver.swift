@@ -32,12 +32,11 @@ public struct AndroidHostDriver: HostDriver {
                 environment: environment, platform: platform, runner: runner
             )
             let devices = await deviceList(toolchain)
+            // Gradle is fetched on the first head build when no cache or PATH has
+            // it, so its absence does not make the host unavailable.
             return HostSupport.availability(
-                id, platform: platform, toolchainReady: toolchain.gradle != nil,
-                deviceAvailable: !devices.isEmpty,
-                reason: toolchain.gradle == nil
-                    ? "Gradle \(AndroidToolchain.gradleVersion) was not found; install it or let the wrapper cache it."
-                    : nil
+                id, platform: platform, toolchainReady: true,
+                deviceAvailable: !devices.isEmpty
             )
         } catch {
             let structured = error.toolingError
@@ -65,7 +64,7 @@ public struct AndroidHostDriver: HostDriver {
             name: application.name, package: application.directory, product: application.product(for: id),
             configuration: request.configuration, abi: abi, toolchain: toolchain,
             resources: application.directory.appendingPathComponent("Resources", isDirectory: true),
-            context: context, extra: request.extraArguments
+            context: context, extra: request.extraArguments, installGradle: !request.dryRun
         )
     }
 
@@ -87,7 +86,7 @@ public struct AndroidHostDriver: HostDriver {
                 name: product, package: package, product: product,
                 configuration: .debug, abi: abi, toolchain: toolchain,
                 resources: package.appendingPathComponent("Resources", isDirectory: true),
-                context: context, extra: []
+                context: context, extra: [], installGradle: !request.dryRun
             )
             let apk = apkURL(build.outputs.first, package: package, product: product, configuration: .debug)
             return TestPlan(
@@ -106,7 +105,7 @@ public struct AndroidHostDriver: HostDriver {
             name: product, package: package, product: product,
             configuration: .debug, abi: abi, toolchain: toolchain,
             resources: package.appendingPathComponent("Resources", isDirectory: true),
-            context: context, extra: []
+            context: context, extra: [], installGradle: !request.dryRun
         )
         let apk = apkURL(build.outputs.first, package: package, product: product, configuration: .debug)
         let namespace = packageName(package: package) ?? "com.stateui.android.tests"
@@ -214,7 +213,7 @@ public struct AndroidHostDriver: HostDriver {
             name: application.name, package: application.directory, product: application.product(for: id),
             configuration: .release, abi: abi, toolchain: toolchain,
             resources: application.directory.appendingPathComponent("Resources", isDirectory: true),
-            context: context, extra: []
+            context: context, extra: [], installGradle: !request.dryRun
         )
         let apk = apkURL(
             application.buildDirectory(for: id)
@@ -322,7 +321,7 @@ public struct AndroidHostDriver: HostDriver {
     private func headPlan(
         name: String, package: URL, product: String, configuration: BuildConfiguration,
         abi: String, toolchain: AndroidToolchain, resources: URL, context: ProjectContext,
-        extra: [String]
+        extra: [String], installGradle: Bool = true
     ) async throws -> BuildPlan {
         guard let triple = HostCompilation.androidTriple(for: abi) else {
             throw ToolingError.invalidArguments(
@@ -339,11 +338,14 @@ public struct AndroidHostDriver: HostDriver {
                 "\(name) has no Android head at \(head.path)."
             )
         }
-        guard let gradle = toolchain.gradle else {
-            throw ToolingError.toolchainMissing(
-                "Gradle \(AndroidToolchain.gradleVersion) was not found.",
-                suggestion: "Install it, or let the Gradle wrapper download it once."
-            )
+        let gradle: URL
+        if let found = toolchain.gradle {
+            gradle = found
+        } else if installGradle {
+            gradle = try await AndroidToolchain.installGradle(environment: environment, runner: runner)
+        } else {
+            // A plan changes nothing; name where the build would put Gradle.
+            gradle = AndroidToolchain.expectedGradleBinary
         }
 
         let application = Application(
@@ -391,7 +393,7 @@ public struct AndroidHostDriver: HostDriver {
             ))
         }
 
-        var steps: [ProcessInvocation] = [build]
+        let steps: [ProcessInvocation] = [build]
         var postSteps: [ProcessInvocation] = []
 
         if let strip = toolchain.ndkTool("llvm-strip") {
@@ -413,8 +415,10 @@ public struct AndroidHostDriver: HostDriver {
         if let compiler = await compiler(), let checkoutScript = rasterizerScript,
            FileSystem.isDirectory(resources.appendingPathComponent("Images", isDirectory: true)) {
             let rasterizer = tools.appendingPathComponent("rasterize-images")
-            steps.append(HostSupport.run(
-                compiler, ["-O", checkoutScript.path, "-o", rasterizer.path],
+            // After the actions: they create `tools`, where the tool is written.
+            postSteps.append(HostSupport.run(
+                compiler.executable,
+                compiler.prefix + ["-O", checkoutScript.path, "-o", rasterizer.path],
                 cwd: package, label: "Compile the picture rasterizer"
             ))
             postSteps.append(HostSupport.run(
@@ -429,8 +433,9 @@ public struct AndroidHostDriver: HostDriver {
         if let compiler = await compiler(), let drawerScript = drawerScriptPath,
            FileSystem.isDirectory(resources.appendingPathComponent("AppIcon", isDirectory: true)) {
             let drawer = tools.appendingPathComponent("draw-app-icon")
-            steps.append(HostSupport.run(
-                compiler, ["-O", drawerScript.path, "-o", drawer.path],
+            postSteps.append(HostSupport.run(
+                compiler.executable,
+                compiler.prefix + ["-O", drawerScript.path, "-o", drawer.path],
                 cwd: package, label: "Compile the icon drawer"
             ))
             postSteps.append(HostSupport.run(
@@ -555,13 +560,15 @@ public struct AndroidHostDriver: HostDriver {
         return abi
     }
 
-    private func compiler() async -> URL? {
-        if platform.operatingSystem == .macOS, let xcrun = runner.which("xcrun"),
-           let output = await runner.output(xcrun, ["--find", "swiftc"], label: "xcrun --find swiftc") {
-            let path = output.trimmingCharacters(in: .whitespacesAndNewlines)
-            if FileSystem.isExecutable(URL(fileURLWithPath: path)) { return URL(fileURLWithPath: path) }
+    /// The host compiler for the repository's own support tools. On macOS `xcrun
+    /// swiftc` is used rather than the toolchain's absolute path: xcrun gives the
+    /// compiler the SDK it needs, where a bare `swiftc` may not find one.
+    private func compiler() async -> (executable: URL, prefix: [String])? {
+        if platform.operatingSystem == .macOS, let xcrun = runner.which("xcrun") {
+            return (xcrun, ["swiftc"])
         }
-        return runner.which("swiftc")
+        if let swiftc = runner.which("swiftc") { return (swiftc, []) }
+        return nil
     }
 
     private func packageName(package: URL) -> String? {

@@ -190,10 +190,14 @@ public struct AndroidToolchain: Sendable {
 
         var seen = Set<String>()
         for candidate in candidates where FileSystem.isExecutable(candidate) {
-            let resolved = candidate.resolvingSymlinksInPath()
-            guard seen.insert(resolved.path).inserted else { continue }
-            guard let text = await runner.output(resolved, ["--version"], label: "swift") else { continue }
-            if text.contains("(swift-") { return resolved }
+            // Resolving the link is only for deduplication: a swiftly `swift` is a
+            // link to `swiftly`, and an Xcode `swift` one to `swift-driver`, neither
+            // of which answers `--version` as Swift does. The candidate as written
+            // is what runs.
+            let identity = candidate.resolvingSymlinksInPath().path
+            guard seen.insert(identity).inserted else { continue }
+            guard let text = await runner.output(candidate, ["--version"], label: "swift") else { continue }
+            if text.contains("(swift-") { return candidate }
         }
         throw ToolingError.toolchainMissing(
             "No swift.org Swift toolchain was found.",
@@ -279,13 +283,71 @@ public struct AndroidToolchain: Sendable {
 
     static func gradleBinary(environment: Environment, runner: CommandRunner) -> URL? {
         let dists = FileSystem.home().appendingPathComponent(".gradle/wrapper/dists")
-        for entry in FileSystem.children(dists) where entry.lastPathComponent.hasPrefix("gradle-\(gradleVersion)-bin") {
+        for entry in FileSystem.children(dists) where entry.lastPathComponent == "gradle-\(gradleVersion)-bin" {
             for inner in FileSystem.children(entry) {
                 let candidate = inner.appendingPathComponent("gradle-\(gradleVersion)/bin/gradle")
                 if FileSystem.isExecutable(candidate) { return candidate }
             }
         }
         return runner.which("gradle")
+    }
+
+    /// Where `installGradle` puts Gradle, whether or not it is there yet: a plan
+    /// names it without downloading anything.
+    static var expectedGradleBinary: URL {
+        FileSystem.home()
+            .appendingPathComponent(
+                ".gradle/wrapper/dists/gradle-\(gradleVersion)-bin/stateui/gradle-\(gradleVersion)/bin/gradle"
+            )
+    }
+
+    /// Gradle, downloading the release the heads build with when no cache or
+    /// `PATH` has it - the same download `.scripts/Android/tools.sh` makes.
+    static func installGradle(environment: Environment, runner: CommandRunner) async throws -> URL {
+        if let found = gradleBinary(environment: environment, runner: runner) { return found }
+        guard let curl = runner.which("curl") else {
+            throw ToolingError.toolchainMissing(
+                "curl was not found, and Gradle \(gradleVersion) is not cached.",
+                suggestion: "Install curl, or Gradle \(gradleVersion)."
+            )
+        }
+        guard let unzip = runner.which("unzip") else {
+            throw ToolingError.toolchainMissing(
+                "unzip was not found, and Gradle \(gradleVersion) is not cached.",
+                suggestion: "Install unzip, or Gradle \(gradleVersion)."
+            )
+        }
+        let directory = FileSystem.home()
+            .appendingPathComponent(".gradle/wrapper/dists/gradle-\(gradleVersion)-bin/stateui", isDirectory: true)
+        try FileSystem.makeDirectory(directory)
+        let archive = directory.appendingPathComponent("gradle.zip")
+        let url = "https://services.gradle.org/distributions/gradle-\(gradleVersion)-bin.zip"
+        guard let download = await runner.result(
+            curl, ["-fsSL", url, "-o", archive.path], label: "download Gradle \(gradleVersion)"
+        ), download.exitCode == 0 else {
+            try? FileSystem.remove(archive)
+            throw ToolingError.commandFailed(
+                "Gradle \(gradleVersion) could not be downloaded from \(url).",
+                suggestion: "Check the network, or install Gradle \(gradleVersion) yourself."
+            )
+        }
+        guard let unpack = await runner.result(
+            unzip, ["-q", "-o", archive.path, "-d", directory.path], label: "unpack Gradle \(gradleVersion)"
+        ), unpack.exitCode == 0 else {
+            try? FileSystem.remove(archive)
+            throw ToolingError.commandFailed(
+                "Gradle \(gradleVersion) could not be unpacked.",
+                suggestion: "Check that unzip can read \(archive.path)."
+            )
+        }
+        try? FileSystem.remove(archive)
+        guard let found = gradleBinary(environment: environment, runner: runner) else {
+            throw ToolingError.toolchainMissing(
+                "Gradle \(gradleVersion) was unpacked but its binary was not found.",
+                context: ["directory": directory.path]
+            )
+        }
+        return found
     }
 
     public func ndkTool(_ name: String) -> URL? {

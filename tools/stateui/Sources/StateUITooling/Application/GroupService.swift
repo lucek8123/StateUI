@@ -450,7 +450,7 @@ public struct GroupService: Sendable {
         guard outcome.status == .succeeded || outcome.status == .planned else { return outcome }
         var notes = plan.group.notes
         if !plan.group.cloned.isEmpty {
-            notes.append("Cloned \(plan.group.cloned.joined(separator: ", ")) into \(plan.path)/apps.")
+            notes.append("\(dryRun ? "Would clone" : "Cloned") \(plan.group.cloned.joined(separator: ", ")) into \(plan.path)/apps.")
         }
         if !plan.group.reused.isEmpty {
             notes.append("Kept the releases already in the group: \(plan.group.reused.joined(separator: ", ")).")

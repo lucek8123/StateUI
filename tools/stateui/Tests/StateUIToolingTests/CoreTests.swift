@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Paweł Krzywdziński and Contributors
 // SPDX-License-Identifier: Apache-2.0
 
+import Foundation
 import XCTest
 @testable import StateUITooling
 
@@ -213,5 +214,53 @@ final class CoreTests: XCTestCase {
         let text = try JSON.encode(report)
         let value = try JSON.decoder().decode(JSONValue.self, from: Data(text.utf8))
         XCTAssertEqual(value["ready"], .bool(true))
+    }
+
+    /// A relative path is counted with the links resolved: macOS's /var is a link
+    /// into /private, so a path counted over its spelling points nowhere.
+    func testRelativePathResolvesTheLinksItIsCountedOver() throws {
+        let base = try TestFixture.temporaryDirectory("relative")
+        defer { TestFixture.remove(base) }
+        let start = base.appendingPathComponent("App", isDirectory: true)
+        try FileManager.default.createDirectory(at: start, withIntermediateDirectories: true)
+        let relative = FileSystem.relativePath(from: start, to: FileManager.default.homeDirectoryForCurrentUser)
+        let resolved = start.appendingPathComponent(relative)
+        XCTAssertTrue(
+            FileManager.default.fileExists(atPath: resolved.path),
+            "\(relative) from \(start.path) names no directory"
+        )
+    }
+
+    /// Writing the editor settings keeps a JSONC file's comments and keys. A
+    /// decoder that cannot read the comments must not replace the whole document.
+    func testEditorSettingsKeepCommentsAndExistingKeys() {
+        let existing = """
+        {
+          // The repository's own note.
+          "swift.searchSubfoldersForPackages": true,
+          "files.exclude": { "**/.build": true }
+        }
+        """
+        let written = LSPService.settings(existing: existing)
+        XCTAssertTrue(written.contains("// The repository's own note."))
+        XCTAssertTrue(written.contains("swift.searchSubfoldersForPackages"))
+        XCTAssertTrue(written.contains("files.exclude"))
+        XCTAssertTrue(written.contains("search.exclude"))
+        XCTAssertTrue(written.contains(".build"))
+    }
+
+    func testEditorSettingsReplaceAnExistingSearchExclude() {
+        let existing = """
+        {
+          // note
+          "search.exclude": { "old": true },
+          "other": 1
+        }
+        """
+        let written = LSPService.settings(existing: existing)
+        XCTAssertTrue(written.contains("// note"))
+        XCTAssertTrue(written.contains("\"other\""))
+        XCTAssertFalse(written.contains("\"old\""))
+        XCTAssertTrue(written.contains(".build"))
     }
 }

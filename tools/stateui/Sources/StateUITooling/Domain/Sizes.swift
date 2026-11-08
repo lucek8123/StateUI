@@ -62,3 +62,32 @@ public struct SizeReport: Codable, Sendable {
 
     public var failed: Bool { budgets.contains(where: { $0.verdict == .over }) }
 }
+
+/// What weighing a host's modules would do, without building or compressing
+/// anything: each application, the module it would weigh, its recorded budget,
+/// and the build the measurement needs.
+public struct SizePlan: Codable, Sendable {
+    public struct Entry: Codable, Sendable {
+        public let application: String
+        public let module: URL
+        public let budget: Int
+        public let build: BuildPlan
+
+        public init(application: String, module: URL, budget: Int, build: BuildPlan) {
+            self.application = application
+            self.module = module
+            self.budget = budget
+            self.build = build
+        }
+    }
+
+    public let host: HostID
+    public let configuration: BuildConfiguration
+    public let budgets: [Entry]
+
+    public init(host: HostID, configuration: BuildConfiguration, budgets: [Entry]) {
+        self.host = host
+        self.configuration = configuration
+        self.budgets = budgets
+    }
+}

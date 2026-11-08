@@ -100,7 +100,7 @@ struct StateUICommand {
     // MARK: - Commands
 
     static func doctor(_ tooling: Tooling, _ parsed: ParsedCommand) async throws {
-        let hosts = parsed.value("host").flatMap(HostID.init(parsing:)).map { [$0] }
+        let hosts = try hostOption(parsed).map { [$0] }
         let report = await tooling.toolchainService.report(hosts: hosts)
         if parsed.flag("json") {
             emit(report, json: true)
@@ -254,12 +254,15 @@ struct StateUICommand {
             }
         case "set":
             let service = ProjectService(tooling: tooling)
+            let selectedHost = try hostOption(parsed)
+            // A device belongs to a host; `--host` names it when `--device-host` does not.
+            let deviceHost = try deviceHostOption(parsed) ?? selectedHost
             try service.select(
-                host: parsed.value("host").flatMap(HostID.init(parsing:)),
+                host: selectedHost,
                 application: parsed.value("application"),
-                configuration: parsed.value("configuration").flatMap(BuildConfiguration.init(parsing:)),
+                configuration: try configurationOption(parsed),
                 device: parsed.value("device"),
-                deviceHost: parsed.value("device-host").flatMap(HostID.init(parsing:)),
+                deviceHost: deviceHost,
                 browser: parsed.value("browser"),
                 project: parsed.value("project").map { FileSystem.expand($0) }
             )
@@ -274,8 +277,15 @@ struct StateUICommand {
         }
     }
     static func devices(_ tooling: Tooling, _ parsed: ParsedCommand) async throws {
-        guard let raw = parsed.value("host"), let host = HostID(parsing: raw) else {
+        guard let raw = parsed.value("host") else {
             throw ToolingError.invalidArguments("devices needs --host.", suggestion: "Try --host android or --host uikit.")
+        }
+        guard let host = HostID(parsing: raw) else {
+            throw ToolingError.invalidArguments(
+                "'\(raw)' is not a StateUI host.",
+                context: ["host": raw],
+                suggestion: "Use one of: \(HostID.allCases.map(\.rawValue).joined(separator: ", "))."
+            )
         }
         let devices = try await ProjectService(tooling: tooling).devices(
             host: host, project: parsed.value("project").map { FileSystem.expand($0) }
@@ -310,7 +320,7 @@ struct StateUICommand {
         let (named, extras) = parsed.application()
         let request = BuildRequest(
             application: named,
-            host: parsed.value("host").flatMap(HostID.init(parsing:)),
+            host: try hostOption(parsed),
             configuration: try configuration(tooling, parsed),
             device: parsed.value("device"), browser: parsed.value("browser"),
             architecture: parsed.value("architecture"),
@@ -337,7 +347,7 @@ struct StateUICommand {
         }
         let request = TestRequest(
             application: named,
-            host: parsed.value("host").flatMap(HostID.init(parsing:)),
+            host: try hostOption(parsed),
             configuration: try configuration(tooling, parsed),
             device: parsed.value("device"),
             filter: parsed.value("filter"), suite: parsed.value("suite"),
@@ -368,7 +378,7 @@ struct StateUICommand {
         }
         let request = RunRequest(
             application: named,
-            host: parsed.value("host").flatMap(HostID.init(parsing:)),
+            host: try hostOption(parsed),
             configuration: try configuration(tooling, parsed),
             device: parsed.value("device"), browser: parsed.value("browser"),
             port: parsed.value("port").flatMap(Int.init),
@@ -406,7 +416,7 @@ struct StateUICommand {
         }
         let request = DeployRequest(
             application: named,
-            host: parsed.value("host").flatMap(HostID.init(parsing:)),
+            host: try hostOption(parsed),
             configuration: try configuration(tooling, parsed),
             device: parsed.value("device"), browser: parsed.value("browser"),
             architecture: parsed.value("architecture"),
@@ -433,7 +443,7 @@ struct StateUICommand {
                 suggestion: "stateui stop [NAME] --host web"
             )
         }
-        let host = parsed.value("host").flatMap(HostID.init(parsing:)) ?? .web
+        let host = try hostOption(parsed, default: .web)!
         guard host == .web else {
             throw ToolingError.unsupportedHost(
                 "Nothing serves a page for \(host.rawValue); only the Web host serves one.",
@@ -461,12 +471,18 @@ struct StateUICommand {
                 suggestion: "stateui size budgets --host web"
             )
         }
-        let host = parsed.value("host").flatMap(HostID.init(parsing:)) ?? .web
-        let configuration = parsed.value("configuration")
-            .flatMap(BuildConfiguration.init(parsing:)) ?? .release
+        let host = try hostOption(parsed, default: .web)!
+        let configuration = try configurationOption(parsed) ?? .release
+        let project = parsed.value("project").map { FileSystem.expand($0) }
+        if parsed.flag("dry-run") {
+            let plan = try await SizeService(tooling: tooling).plan(
+                host: host, configuration: configuration, project: project
+            )
+            emit(plan, json: parsed.flag("json"), human: describe(plan))
+            return
+        }
         let report = try await SizeService(tooling: tooling).budgets(
-            host: host, configuration: configuration,
-            project: parsed.value("project").map { FileSystem.expand($0) }
+            host: host, configuration: configuration, project: project
         )
         if parsed.flag("json") {
             emit(report, json: true)
@@ -507,7 +523,7 @@ struct StateUICommand {
             throw ToolingError.invalidArguments("lsp takes environment, configure or clean.")
         }
         let service = LSPService(tooling: tooling)
-        let host = parsed.value("host").flatMap(HostID.init(parsing:))
+        let host = try hostOption(parsed)
         let project = parsed.value("project").map { FileSystem.expand($0) }
         switch action {
         case "environment":
@@ -528,7 +544,8 @@ struct StateUICommand {
             if parsed.flag("json") {
                 emit(result, json: true)
             } else {
-                for path in result.removed { print("removed \(path)") }
+                let verb = parsed.flag("dry-run") ? "would remove" : "removed"
+                for path in result.removed { print("\(verb) \(path)") }
                 for note in result.notes { print(note) }
             }
         default:
@@ -585,7 +602,7 @@ struct StateUICommand {
         }
         let request = DebugRequest(
             application: named,
-            host: parsed.value("host").flatMap(HostID.init(parsing:)),
+            host: try hostOption(parsed),
             configuration: try configuration(tooling, parsed),
             device: parsed.value("device"), browser: parsed.value("browser"),
             prepare: action == "prepare" || parsed.flag("prepare"),
@@ -649,15 +666,23 @@ struct StateUICommand {
     /// The Web suite's class holding the conformance families, and the classes whose tests
     /// need a browser's own page - layout, focus, dialogs, input - so run in one.
     private static let webConformanceClass = "StateUIWebTests.WebConformanceTests"
+    /// The host's own tests that need a browser's page. Kept equal to
+    /// `hosts_in_browser` in `.scripts/Web/test-web.sh`: a class missing here runs
+    /// in Node, where it fails, and never runs in the browser either.
     private static let webInBrowserClasses = [
-        "StateUIWebTests.WebDrawnChildrenTests", "StateUIWebTests.WebShapeRoomTests",
+        "StateUIWebTests.WebDrawnChildrenTests", "StateUIWebTests.WebGesturePaceTests",
+        "StateUIWebTests.WebRequestTests", "StateUIWebTests.WebShapeRoomTests",
         "StateUIWebTests.WebKeyboardTests", "StateUIWebTests.WebFrameReportTests",
         "StateUIWebTests.WebWindowClosingTests", "StateUIWebTests.WebHistoryTests",
-        "StateUIWebTests.WebTabTitleTests", "StateUIWebTests.WebLeaveTests",
-        "StateUIWebTests.WebLookTests", "StateUIWebTests.WebScrollOffsetTests",
-        "StateUIWebTests.WebHandTests", "StateUIWebTests.WebTabStripTests",
+        "StateUIWebTests.WebLinksTests", "StateUIWebTests.WebTabTitleTests",
+        "StateUIWebTests.WebLeaveTests", "StateUIWebTests.WebLookTests",
+        "StateUIWebTests.WebScrollOffsetTests", "StateUIWebTests.WebHandTests",
+        "StateUIWebTests.WebPointerTests", "StateUIWebTests.WebTabStripTests",
         "StateUIWebTests.WebPageElementTests", "StateUIWebTests.WebCanvasViewTests",
-        "StateUIWebTests.WebEnvironmentTests",
+        "StateUIWebTests.WebEnvironmentTests", "StateUIWebTests.WebToggleTests",
+        "StateUIWebTests.WebChoiceTests", "StateUIWebTests.WebEditMenuTests",
+        "StateUIWebTests.WebTestWindowTests", "StateUIWebTests.WebHeldMenuTests",
+        "StateUIWebTests.WebWordsOnTheWayTests",
     ]
 
     /// Every test the suite's program lists, one per line, as `run.mjs --list-tests` answers.
@@ -928,11 +953,49 @@ struct StateUICommand {
 
     // MARK: - Helpers
 
+    /// The host `--host` names, refused when it names none of StateUI's hosts.
+    /// An option given explicitly is never dropped: a mistyped host is a mistake,
+    /// not a request for the checkout's default.
+    static func hostOption(_ parsed: ParsedCommand, default fallback: HostID? = nil) throws -> HostID? {
+        guard let raw = parsed.value("host") else { return fallback }
+        guard let host = HostID(parsing: raw) else {
+            throw ToolingError.invalidArguments(
+                "'\(raw)' is not a StateUI host.",
+                context: ["host": raw],
+                suggestion: "Use one of: \(HostID.allCases.map(\.rawValue).joined(separator: ", "))."
+            )
+        }
+        return host
+    }
+
+    /// The configuration `--configuration` names, refused when it names neither.
+    static func configurationOption(_ parsed: ParsedCommand) throws -> BuildConfiguration? {
+        guard let raw = parsed.value("configuration") else { return nil }
+        guard let configuration = BuildConfiguration(parsing: raw) else {
+            throw ToolingError.invalidArguments(
+                "'\(raw)' is not a configuration.",
+                context: ["configuration": raw],
+                suggestion: "Use debug or release."
+            )
+        }
+        return configuration
+    }
+
+    /// The host `--device-host` names, refused when it names none.
+    static func deviceHostOption(_ parsed: ParsedCommand) throws -> HostID? {
+        guard let raw = parsed.value("device-host") else { return nil }
+        guard let host = HostID(parsing: raw) else {
+            throw ToolingError.invalidArguments(
+                "'\(raw)' is not a StateUI host.",
+                context: ["device-host": raw],
+                suggestion: "Use one of: \(HostID.allCases.map(\.rawValue).joined(separator: ", "))."
+            )
+        }
+        return host
+    }
+
     static func configuration(_ tooling: Tooling, _ parsed: ParsedCommand) throws -> BuildConfiguration {
-        if let raw = parsed.value("configuration") {
-            guard let configuration = BuildConfiguration(parsing: raw) else {
-                throw ToolingError.invalidArguments("Unknown configuration \(raw).")
-            }
+        if let configuration = try configurationOption(parsed) {
             return configuration
         }
         let project = try tooling.project(explicit: parsed.value("project").map { FileSystem.expand($0) })
@@ -993,6 +1056,18 @@ struct StateUICommand {
         for step in plan.steps { lines.append("  step: \(step.label): \(step.displayCommand)") }
         if let url = plan.url { lines.append("  url: \(url)") }
         for note in plan.notes { lines.append("  note: \(note)") }
+        return lines.joined(separator: "\n")
+    }
+
+    static func describe(_ plan: SizePlan) -> String {
+        var lines = ["weigh \(plan.host.label) modules (\(plan.configuration.rawValue))"]
+        for entry in plan.budgets {
+            lines.append("  app: \(entry.application), budget \(entry.budget) bytes gzipped")
+            lines.append("  module: \(entry.module.path)")
+            for step in entry.build.steps { lines.append("    step: \(step.label): \(step.displayCommand)") }
+            for action in entry.build.actions { lines.append("    file: \(action.summary)") }
+            for step in entry.build.postSteps { lines.append("    after: \(step.label): \(step.displayCommand)") }
+        }
         return lines.joined(separator: "\n")
     }
 
