@@ -156,7 +156,12 @@ public struct SwiftBuilder: Sendable {
 /// The triple and SDK a host's heads are compiled for when that is not this
 /// machine.
 public enum HostCompilation {
-    public static let uikitSimulatorTriple = "arm64-apple-ios26.0-simulator"
+    /// The simulator's architecture is the machine's: an Intel Mac runs x86_64
+    /// simulators, and an arm64 triple it cannot run is not a universal build.
+    public static var uikitSimulatorTriple: String {
+        let architecture = Platform.current.architecture == .x86_64 ? "x86_64" : "arm64"
+        return "\(architecture)-apple-ios26.0-simulator"
+    }
     public static let uikitDeviceTriple = "arm64-apple-ios26.0"
     public static let androidTriple = "aarch64-unknown-linux-android28"
     public static let androidX8664Triple = "x86_64-unknown-linux-android28"

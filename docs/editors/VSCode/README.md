@@ -96,8 +96,8 @@ says **no host**, a launch says why it runs nothing, and the editor and
   compiles for WebAssembly - the Swift SDK for WebAssembly of the toolchain's
   release, `wasm32-unknown-wasip1` - so code under `#if WEB` and
   `Platforms/Web` resolve. As UIKit it
-  compiles for the iOS simulator - `arm64-apple-ios26.0-simulator` against
-  Xcode's simulator SDK - so code under `#if UIKIT` and `Platforms/UIKit`
+  compiles for the iOS simulator - the Mac's own architecture (arm64 on Apple
+  silicon, x86_64 on an Intel Mac) against Xcode's simulator SDK - so code under `#if UIKIT` and `Platforms/UIKit`
   resolve.
 - **StateUI: Debug and StateUI: Release run on it.** On AppKit the application's
   head is built - with its bundling script where it has one, with SwiftPM
@@ -292,7 +292,7 @@ them and restarts the server, for an index a failed build left inconsistent.
 
 **StateUI: Check Toolchain** looks for what this machine needs to build and run
 the hosts it runs, as [Requirements](#requirements) and the handbook's host pages
-say - Swift 6.4; Xcode 27, an iOS simulator runtime and the Android SDK, NDK,
+say - Swift 6.4; Xcode 26 or newer (with Swift 6.4 or swift.org's), an iOS simulator runtime and the Android SDK, NDK,
 JDK and Swift SDK on macOS; Visual Studio's C++ tools, the Windows SDK and the
 WebView2 runtime on Windows; GTK, libadwaita, WebKitGTK, gdk-pixbuf's SVG
 loader and a desktop session on Linux; the Swift SDK for WebAssembly and Python 3 for the Web on macOS and

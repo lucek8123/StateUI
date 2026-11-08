@@ -100,7 +100,7 @@ public enum HostID: String, Codable, CaseIterable, Sendable, Hashable {
     public var target: HostTarget? {
         switch self {
         case .uiKit:
-            return HostTarget(triple: "arm64-apple-ios26.0-simulator", xcodeSDK: "iphonesimulator")
+            return HostTarget(triple: HostCompilation.uikitSimulatorTriple, xcodeSDK: "iphonesimulator")
         case .android:
             return HostTarget(triple: "aarch64-unknown-linux-android28", swiftSDKFamily: "android")
         case .web:

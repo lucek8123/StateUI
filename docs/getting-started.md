@@ -15,7 +15,7 @@ checkout on disk.
 
 ## Requirements
 
-- macOS 26 or newer, with Xcode 27 and its Swift 6.4, for the AppKit host;
+- macOS 26 or newer, with Xcode 26 or newer and Swift 6.4 (Xcode 27's, or swift.org's 6.4 toolchain), for the AppKit host;
 - a checkout of this repository;
 - VS Code and Node.js 20 or newer, for the StateUI extension.
 

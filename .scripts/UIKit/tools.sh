@@ -14,8 +14,17 @@ uikit_target () {
   UIKIT_SDK_NAME="$1"
   UIKIT_SDK="$(xcrun --sdk "$1" --show-sdk-path)"
   UIKIT_PLATFORM="$(xcrun --sdk "$1" --show-sdk-platform-path)"
-  UIKIT_TRIPLE="arm64-apple-ios26.0"
-  [[ "$1" == iphoneos ]] || UIKIT_TRIPLE+="-simulator"
+  if [[ "$1" == iphoneos ]]; then
+    # A device is always arm64.
+    UIKIT_TRIPLE="arm64-apple-ios26.0"
+  else
+    # A simulator runs the Mac's architecture: arm64 on Apple silicon, x86_64
+    # on an Intel Mac, whose simulator cannot run an arm64 application.
+    case "$(uname -m)" in
+      x86_64) UIKIT_TRIPLE="x86_64-apple-ios26.0-simulator" ;;
+      *)      UIKIT_TRIPLE="arm64-apple-ios26.0-simulator" ;;
+    esac
+  fi
 }
 uikit_target iphonesimulator
 

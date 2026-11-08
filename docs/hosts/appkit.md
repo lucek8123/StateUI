@@ -24,8 +24,8 @@ apps/<App>/Platforms/AppKit/
 
 ## Requirements
 
-The host builds on macOS 26 or newer, with Xcode 27 or newer and its Swift
-6.4. macOS 26 is the floor of the host's package and of the library, which an
+The host builds on macOS 26 or newer, with Xcode 26 or newer and Swift 6.4 -
+Xcode 27's, or swift.org's 6.4 toolchain when Xcode's is older. macOS 26 is the floor of the host's package and of the library, which an
 application's manifest cannot go below. A Debug launch runs Xcode's
 `lldb-dap`. Nothing else is installed: the `Map` and the `WebView` stand on
 MapKit and WebKit, which macOS ships. [Tested setups](../tested-setups.md)

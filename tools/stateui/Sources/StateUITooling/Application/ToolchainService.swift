@@ -57,7 +57,7 @@ public struct ToolchainService: Sendable {
             return ToolchainFinding(
                 component: "Swift 6.4 or newer", neededBy: hosts, status: .missing,
                 requiredVersion: "6.4", requiredPlatform: platform.description,
-                advice: "Install Swift 6.4 from https://www.swift.org/install (Xcode 27 brings it on macOS)."
+                advice: "Install Swift 6.4 from https://www.swift.org/install (Xcode 27 brings it; swift.org's installer has it for older Xcode)."
             )
         }
         let output = await runner.output(swift, ["--version"], label: "swift --version") ?? ""
@@ -138,15 +138,15 @@ public struct ToolchainService: Sendable {
             let version = output.range(of: #"Xcode (\d+(?:\.\d+)*)"#, options: .regularExpression)
                 .map { String(output[$0]).replacingOccurrences(of: "Xcode ", with: "") }
             findings.append(ToolchainFinding(
-                component: "Xcode 27 or newer", neededBy: hosts.filter { $0 == .appKit || $0 == .uiKit },
-                status: version.map { Version.atLeast($0, "27") } == true ? .found : .tooOld,
-                version: version, requiredVersion: "27",
-                advice: "Install Xcode 27, run it once, or select it with xcode-select."
+                component: "Xcode 26 or newer", neededBy: hosts.filter { $0 == .appKit || $0 == .uiKit },
+                status: version.map { Version.atLeast($0, "26") } == true ? .found : .tooOld,
+                version: version, requiredVersion: "26",
+                advice: "Install Xcode 26 or newer, run it once, or select it with xcode-select."
             ))
         } else {
             findings.append(ToolchainFinding(
-                component: "Xcode 27 or newer", neededBy: hosts.filter { $0 == .appKit || $0 == .uiKit },
-                status: .missing, requiredVersion: "27", advice: "Install Xcode 27 from the App Store."
+                component: "Xcode 26 or newer", neededBy: hosts.filter { $0 == .appKit || $0 == .uiKit },
+                status: .missing, requiredVersion: "26", advice: "Install Xcode 26 or newer from the App Store."
             ))
         }
         if let xcrun = runner.which("xcrun") {

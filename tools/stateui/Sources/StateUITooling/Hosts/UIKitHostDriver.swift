@@ -30,13 +30,13 @@ public struct UIKitHostDriver: HostDriver {
         guard let xcrun = runner.which("xcrun") else {
             return HostSupport.availability(
                 id, platform: platform, toolchainReady: false,
-                reason: "xcrun was not found. Install Xcode 27 and select it with xcode-select."
+                reason: "xcrun was not found. Install Xcode 26 or newer and select it with xcode-select."
             )
         }
         guard await runner.output(xcrun, ["--find", "swift"], label: "xcrun --find swift") != nil else {
             return HostSupport.availability(
                 id, platform: platform, toolchainReady: false,
-                reason: "Xcode's Swift was not found. Install Xcode 27."
+                reason: "Xcode's Swift was not found. Install Xcode 26 or newer."
             )
         }
         let runtimes = await runner.output(
@@ -437,6 +437,7 @@ public struct UIKitHostDriver: HostDriver {
             .remove(bundle),
             .createDirectory(frameworks),
             .createDirectory(images),
+            .createDirectory(tools),
             .copy(executable, to: bundle.appendingPathComponent(product)),
             .copyMatching(bin, matching: ".dylib", to: frameworks),
             .write(HostSupport.infoPlist(
@@ -451,7 +452,7 @@ public struct UIKitHostDriver: HostDriver {
             ))
         }
 
-        var steps: [ProcessInvocation] = []
+        let steps: [ProcessInvocation] = []
         var postSteps: [ProcessInvocation] = []
         let checkout = try? HostSupport.checkout(context)
 
@@ -468,11 +469,12 @@ public struct UIKitHostDriver: HostDriver {
         let rasterizerSourceURL = checkout?.appendingPathComponent("tools/stateui/Support/rasterize-images.swift")
         let rasterizerSource = (rasterizerSourceURL.map { FileSystem.exists($0) } == true) ? rasterizerSourceURL : nil
         if FileSystem.isDirectory(sourceImages), let rasterizerSource = rasterizerSource,
-           let swiftc = try? await awaitCompiler("swiftc") {
+           let compiler = await supportCompiler() {
             let rasterizer = tools.appendingPathComponent("rasterize-images")
-            steps.append(HostSupport.run(
-                swiftc, ["-O", rasterizerSource.path,
-                         "-o", rasterizer.path],
+            // After the actions: they create `tools`, where the tool is written.
+            postSteps.append(HostSupport.run(
+                compiler.executable,
+                compiler.prefix + ["-O", rasterizerSource.path, "-o", rasterizer.path],
                 cwd: application.directory, label: "Compile the picture rasterizer"
             ))
             postSteps.append(HostSupport.run(
@@ -487,13 +489,13 @@ public struct UIKitHostDriver: HostDriver {
         let drawerSourceURL = checkout?.appendingPathComponent("tools/stateui/Support/draw-app-icon-uikit.swift")
         let drawerSource = (drawerSourceURL.map { FileSystem.exists($0) } == true) ? drawerSourceURL : nil
         if FileSystem.isDirectory(artwork), let drawerSource = drawerSource,
-           let swiftc = try? await awaitCompiler("swiftc") {
+           let compiler = await supportCompiler() {
             let drawer = tools.appendingPathComponent("draw-app-icon")
             let catalog = tools.appendingPathComponent("Assets.xcassets", isDirectory: true)
             let iconPlist = tools.appendingPathComponent("icon.plist")
-            steps.append(HostSupport.run(
-                swiftc, ["-O", drawerSource.path,
-                         "-o", drawer.path],
+            postSteps.append(HostSupport.run(
+                compiler.executable,
+                compiler.prefix + ["-O", drawerSource.path, "-o", drawer.path],
                 cwd: application.directory, label: "Compile the icon drawer"
             ))
             postSteps.append(HostSupport.run(
@@ -558,7 +560,21 @@ public struct UIKitHostDriver: HostDriver {
         guard !path.isEmpty, FileSystem.isExecutable(URL(fileURLWithPath: path)) else {
             throw ToolingError.toolchainMissing("Xcode's Swift was not found at \(path).")
         }
-        return URL(fileURLWithPath: path)
+        let xcodeSwift = URL(fileURLWithPath: path)
+        // Xcode 27's Swift 6.4 reads the package's 6.4 tools version and its own
+        // SDK. A machine with an older Xcode still has swift.org's toolchain, which
+        // can compile against the same SDK; it is the only one that can read a
+        // package written for Swift 6.4.
+        if let text = await runner.output(xcodeSwift, ["--version"], label: "swift --version"),
+           let version = Version.swiftRelease(in: text), Version.atLeast(version, "6.4") {
+            return xcodeSwift
+        }
+        if let swift = try? swiftBuilder.swift() { return swift }
+        throw ToolingError.toolchainMissing(
+            "Xcode's Swift is older than 6.4, and no swift.org toolchain was found.",
+            context: ["xcodeSwift": xcodeSwift.path],
+            suggestion: "Install Xcode 27, or Swift 6.4 from swift.org."
+        )
     }
 
     private func xcrunPlatformPath(_ sdk: String) async -> URL? {
@@ -569,23 +585,22 @@ public struct UIKitHostDriver: HostDriver {
         return path.isEmpty ? nil : URL(fileURLWithPath: path)
     }
 
-    private func awaitCompiler(_ name: String) async throws -> URL {
-        guard let xcrun = runner.which("xcrun"),
-              let output = await runner.output(xcrun, ["--find", name], label: "xcrun --find \(name)") else {
-            throw ToolingError.toolchainMissing("\(name) was not found in Xcode.")
+    /// The host compiler for the repository's own support tools. On macOS `xcrun
+    /// swiftc` is used rather than the toolchain's absolute path: xcrun gives the
+    /// compiler the SDK it needs, where a bare `swiftc` may not find one.
+    private func supportCompiler() async -> (executable: URL, prefix: [String])? {
+        if platform.operatingSystem == .macOS, let xcrun = runner.which("xcrun") {
+            return (xcrun, ["swiftc"])
         }
-        let path = output.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard FileSystem.isExecutable(URL(fileURLWithPath: path)) else {
-            throw ToolingError.toolchainMissing("\(name) was not found in Xcode.")
-        }
-        return URL(fileURLWithPath: path)
+        if let swiftc = runner.which("swiftc") { return (swiftc, []) }
+        return nil
     }
 
     func resolveDestination(for wanted: String?) async throws -> Destination {
         guard platform.operatingSystem == .macOS, let xcrun = runner.which("xcrun") else {
             throw ToolingError.hostUnavailable(
                 "UIKit heads are built on macOS.",
-                suggestion: "Run stateui on a Mac with Xcode 27."
+                suggestion: "Run stateui on a Mac with Xcode 26 or newer and Swift 6.4."
             )
         }
         if let wanted {

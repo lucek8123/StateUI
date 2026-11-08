@@ -30,7 +30,7 @@ public struct AppKitHostDriver: HostDriver {
         guard (try? swiftBuilder.swift()) != nil else {
             return HostSupport.availability(
                 id, platform: platform, toolchainReady: false,
-                reason: "Swift was not found. Install Xcode 27, or set SWIFT_BIN."
+                reason: "Swift was not found. Install Swift 6.4 (Xcode 27 or swift.org), or set SWIFT_BIN."
             )
         }
         return HostSupport.availability(id, platform: platform, toolchainReady: true)
