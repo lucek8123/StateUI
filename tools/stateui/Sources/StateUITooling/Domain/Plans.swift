@@ -449,6 +449,10 @@ public struct TestRequest: Sendable {
     public var device: String?
     public var filter: String?
     public var suite: String?
+    /// Run the host's conformance families rather than its own suite.
+    public var conformance: Bool
+    /// Run every host this machine offers, one device or browser each.
+    public var allAvailableHosts: Bool
     /// The Web host's suites that need a browser's own page, run in one.
     public var browser: Bool
     /// Build the suite's artifact and stop, without running it - for a machine
@@ -464,7 +468,8 @@ public struct TestRequest: Sendable {
 
     public init(
         application: String? = nil, host: HostID? = nil, configuration: BuildConfiguration = .debug,
-        device: String? = nil, filter: String? = nil, suite: String? = nil, browser: Bool = false,
+        device: String? = nil, filter: String? = nil, suite: String? = nil, conformance: Bool = false,
+        allAvailableHosts: Bool = false, browser: Bool = false,
         buildOnly: Bool = false, architecture: String? = nil, updateExports: Bool = false,
         staleOnly: Bool = false, dryRun: Bool = false
     ) {
@@ -474,12 +479,31 @@ public struct TestRequest: Sendable {
         self.device = device
         self.filter = filter
         self.suite = suite
+        self.conformance = conformance
+        self.allAvailableHosts = allAvailableHosts
         self.browser = browser
         self.buildOnly = buildOnly
         self.architecture = architecture
         self.updateExports = updateExports
         self.staleOnly = staleOnly
         self.dryRun = dryRun
+    }
+
+    /// The filter a conformance run of `host` uses: its class, or one family of it.
+    public func conformanceFilter(for host: HostID) -> String? {
+        guard conformance else { return nil }
+        guard let filter, !filter.isEmpty else { return host.conformanceClass }
+        if filter.contains(".") || filter.contains("/") { return filter }
+        return "\(host.conformanceClass).test\(filter)"
+    }
+
+    /// This request for one host of an all-available run.
+    public func forHost(_ host: HostID, device: String?, browser: Bool) -> TestRequest {
+        var request = self
+        request.host = host
+        request.device = device
+        request.browser = browser
+        return request
     }
 
     /// The variables a conformance run reads to write or narrow its verdicts.

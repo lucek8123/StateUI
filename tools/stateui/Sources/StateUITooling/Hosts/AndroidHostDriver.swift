@@ -112,7 +112,7 @@ public struct AndroidHostDriver: HostDriver {
         var instrument = [
             "shell", "am", "instrument", "-w",
         ]
-        if let filter = request.filter ?? request.suite {
+        if let filter = request.conformanceFilter(for: id) ?? request.filter ?? request.suite {
             instrument.append(contentsOf: ["-e", "filter", filter])
         }
         instrument.append("\(namespace)/stateui.android.test.StateUITestRunner")
@@ -130,7 +130,9 @@ public struct AndroidHostDriver: HostDriver {
             application: context.application?.name, host: id,
             suites: [TestSuitePlan(
                 name: "lib/StateUI/StateUI.Android/Tests",
-                detail: "the Android host's package, run by instrumentation on \(serial) (\(abi))",
+                detail: request.conformance
+                    ? "the Android host's conformance families, run by instrumentation on \(serial) (\(abi))"
+                    : "the Android host's package, run by instrumentation on \(serial) (\(abi))",
                 steps: build.steps, actions: build.actions, postSteps: postSteps,
                 requiresDevice: true, host: id
             )]

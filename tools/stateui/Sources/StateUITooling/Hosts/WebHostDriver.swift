@@ -200,7 +200,16 @@ public struct WebHostDriver: HostDriver {
         }
         var runArguments: [String]
         let detail: String
-        if request.browser {
+        if request.conformance {
+            // The conformance families each run in a program of their own, the page loaded anew.
+            runArguments = ["__web-browser-test", relay.path, program.path]
+            if let families = request.filter {
+                runArguments.append(families)
+            } else {
+                runArguments.append("--conformance")
+            }
+            detail = "the Web host's conformance families, each in a headless browser"
+        } else if request.browser {
             // The tests a browser's own page needs: the conformance families and the
             // host's tests that run a host, each in a program of its own, the page loaded anew.
             runArguments = ["__web-browser-test", relay.path, program.path]

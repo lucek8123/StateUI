@@ -545,6 +545,40 @@ final class PlanTests: XCTestCase {
         XCTAssertTrue(TestRequest().conformanceEnvironment.isEmpty)
     }
 
+    func testConformanceFilterNamesTheHostsClassAndFamily() {
+        XCTAssertEqual(
+            TestRequest(conformance: true).conformanceFilter(for: .winUI),
+            "WinUIConformanceTests"
+        )
+        XCTAssertEqual(
+            TestRequest(filter: "Button", conformance: true).conformanceFilter(for: .winUI),
+            "WinUIConformanceTests.testButton"
+        )
+        XCTAssertEqual(
+            TestRequest(filter: "WinUIConformanceTests.testButton", conformance: true)
+                .conformanceFilter(for: .winUI),
+            "WinUIConformanceTests.testButton"
+        )
+        XCTAssertNil(TestRequest().conformanceFilter(for: .winUI))
+        XCTAssertEqual(HostID.android.conformanceClass, "AndroidConformanceTests")
+        XCTAssertEqual(HostID.web.conformanceClass, "StateUIWebTests.WebConformanceTests")
+    }
+
+    func testAllAvailableRequestCarriesTheHostAndConformance() {
+        let request = TestRequest(filter: "Button", conformance: true, allAvailableHosts: true)
+        let winUI = request.forHost(.winUI, device: nil, browser: false)
+        XCTAssertEqual(winUI.host, HostID.winUI)
+        XCTAssertTrue(winUI.conformance)
+        XCTAssertTrue(winUI.allAvailableHosts)
+        XCTAssertEqual(winUI.filter, "Button")
+    }
+
+    func testCommandLineAcceptsConformance() throws {
+        let parsed = try CommandLineParser.parse(["test", "--conformance", "--host", "all-available"])
+        XCTAssertTrue(parsed.flag("conformance"))
+        XCTAssertEqual(parsed.value("host"), "all-available")
+    }
+
     func testCommandLineAcceptsTheTestFlagsThatCarryNoValue() throws {
         let parsed = try CommandLineParser.parse([
             "test", "--host", "web", "--in-browser", "--build-only",

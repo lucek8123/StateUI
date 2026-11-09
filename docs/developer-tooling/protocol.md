@@ -87,7 +87,7 @@ application or group path) wherever the CLI takes `--project`.
 | `config/get` | `project` | `.stateui/config.json` merged with the local file |
 | `config/set` | `host`, `application`, `configuration`, `device` + `deviceHost`, `browser` | the merged configuration, after writing the local file. An application the checkout does not answer is refused as `applicationNotFound`, naming what stands here, so a client's typed name cannot select something nothing builds. |
 | `build` | `application`, `host`, `configuration`, `device`, `browser`, `architecture`, `extraArguments`, `dryRun` | a `BuildPlan`, or an `ExecutionOutcome` |
-| `test` | `application`, `host`, `configuration`, `device`, `filter`, `suite`, `inBrowser`, `buildOnly`, `updateExports`, `staleOnly`, `dryRun` | a `TestPlan`, or an outcome |
+| `test` | `application`, `host`, `configuration`, `device`, `filter`, `suite`, `conformance`, `allAvailableHosts`, `inBrowser`, `buildOnly`, `updateExports`, `staleOnly`, `dryRun` | a `TestPlan`, a list of `HostTestPlan`s, or an outcome/`TestReport` |
 | `run` | `application`, `host`, `configuration`, `device`, `browser`, `port`, `detach`, `prepare`, `noBuild`, `dryRun` | `{build, run}` plans, or an outcome |
 | `deploy` | `application`, `host`, `configuration`, `destination`, `architecture`, `dryRun` | a `DeployPlan`, or an outcome |
 | `size/budgets` | `host`, `configuration` | each Web module weighed against the budget the repository records |

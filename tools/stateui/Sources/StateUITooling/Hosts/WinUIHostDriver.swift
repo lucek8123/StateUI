@@ -215,7 +215,7 @@ public struct WinUIHostDriver: HostDriver {
         var suites: [TestSuitePlan] = []
         // The foundation's own tests on Windows - its C library and its thread
         // numbers, the branches no other machine runs - before the host's.
-        if request.filter == nil && !request.staleOnly {
+        if request.filter == nil && !request.staleOnly && !request.conformance {
             suites.append(try NativeTestSuites.foundation(builder: builder, checkout: checkout, platform: platform))
         }
 
@@ -261,12 +261,12 @@ public struct WinUIHostDriver: HostDriver {
             ))
         }
         let narrowing: [String]
-        if let filter = request.filter {
+        if let filter = request.conformanceFilter(for: id) ?? request.filter {
             narrowing = ["--filter", filter, "--parallel", "--num-workers", "1"]
-        } else if request.staleOnly {
-            narrowing = ["--filter", "WinUIConformanceTests", "--parallel", "--num-workers", "1"]
+        } else if request.staleOnly || request.updateExports {
+            narrowing = ["--filter", id.conformanceClass, "--parallel", "--num-workers", "1"]
         } else {
-            narrowing = ["--skip", "WinUIConformanceTests", "--parallel", "--num-workers", "1"]
+            narrowing = ["--skip", id.conformanceClass, "--parallel", "--num-workers", "1"]
         }
         postSteps.append(ProcessInvocation(
             executable: swift,
@@ -277,9 +277,11 @@ public struct WinUIHostDriver: HostDriver {
 
         suites.append(TestSuitePlan(
             name: "lib/StateUI/StateUI.WinUI/Testing",
-            detail: request.staleOnly
-                ? "only the conformance families whose verdicts stand at another revision"
-                : "the host's own tests; add --stale or a filter to reach the conformance families",
+            detail: request.conformance
+                ? "the WinUI host's conformance families, each verdict held to its marks"
+                : request.staleOnly
+                    ? "only the conformance families whose verdicts stand at another revision"
+                    : "the host's own tests; add --conformance, --stale or a filter to reach the conformance families",
             steps: steps, postSteps: postSteps, host: id
         ))
         return TestPlan(application: context.application?.name, host: id, suites: suites)

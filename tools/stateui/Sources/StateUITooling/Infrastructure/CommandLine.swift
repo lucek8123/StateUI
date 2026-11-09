@@ -47,7 +47,7 @@ public enum CommandLineParser {
     public static let flagOptions: Set<String> = [
         "json", "quiet", "verbose", "dry-run", "help", "detach",
         "prepare", "no-build", "all", "stdio",
-        "build-only", "in-browser", "update-exports", "stale",
+        "build-only", "in-browser", "update-exports", "stale", "conformance",
     ]
 
     public static func parse(_ arguments: [String]) throws -> ParsedCommand {

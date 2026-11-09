@@ -345,12 +345,36 @@ struct StateUICommand {
                 suggestion: "Name a suite with --suite and a filter with --filter."
             )
         }
+        let allAvailableHosts = parsed.value("host").map(Self.isAllAvailableHost) ?? false
+        let suite = parsed.value("suite")
+        let hostSuite = suite == "native" || suite == "foundation"
+        if allAvailableHosts, hostSuite {
+            throw ToolingError.invalidArguments(
+                "--host all-available runs every host's suites, not --suite \(suite ?? "").",
+                suggestion: "Drop --suite, or name one host with --host."
+            )
+        }
+        if allAvailableHosts, parsed.value("device") != nil {
+            throw ToolingError.invalidArguments(
+                "--host all-available picks one default device for each host.",
+                suggestion: "Name one host with --host and --device, or drop --device."
+            )
+        }
+        let conformance = parsed.flag("conformance") || parsed.flag("stale") || parsed.flag("update-exports")
+        if conformance, hostSuite {
+            throw ToolingError.invalidArguments(
+                "--conformance runs a host's contract families, not --suite \(suite ?? "").",
+                suggestion: "Drop --suite, or drop --conformance."
+            )
+        }
         let request = TestRequest(
             application: named,
-            host: try hostOption(parsed),
+            host: allAvailableHosts ? nil : try hostOption(parsed),
             configuration: try configuration(tooling, parsed),
             device: parsed.value("device"),
-            filter: parsed.value("filter"), suite: parsed.value("suite"),
+            filter: parsed.value("filter"), suite: suite,
+            conformance: conformance,
+            allAvailableHosts: allAvailableHosts,
             browser: parsed.flag("in-browser"),
             buildOnly: parsed.flag("build-only"),
             architecture: parsed.value("architecture"),
@@ -359,11 +383,22 @@ struct StateUICommand {
             dryRun: parsed.flag("dry-run")
         )
         let service = TestService(tooling: tooling)
+        let project = parsed.value("project").map { FileSystem.expand($0) }
+        if allAvailableHosts {
+            if request.dryRun {
+                emitAll(try await service.planAll(request, project: project), json: parsed.flag("json"))
+            } else {
+                let report = try await service.runAll(request, project: project)
+                emitReport(report, json: parsed.flag("json"))
+                if !report.succeeded { exit(1) }
+            }
+            return
+        }
         if request.dryRun {
-            let (_, plan) = try await service.plan(request, project: parsed.value("project").map { FileSystem.expand($0) })
+            let (_, plan) = try await service.plan(request, project: project)
             emit(plan, json: parsed.flag("json"), human: describe(plan))
         } else {
-            let outcome = try await service.run(request, project: parsed.value("project").map { FileSystem.expand($0) })
+            let outcome = try await service.run(request, project: project)
             emitOutcome(outcome, json: parsed.flag("json"))
         }
     }
@@ -764,12 +799,17 @@ struct StateUICommand {
 
         let rest = Array(parsed.positionals.dropFirst(2))
         let selected: [String]
-        if rest.first == "--host" {
+        if rest.first == "--conformance" {
+            // The conformance families alone, each in a program of its own.
+            let families = try listWebTests(node: node, runScript: runScript, relay: relay, program: program)
+                .filter { $0.hasPrefix("\(webConformanceClass)/") }
+            selected = rest.count > 1 ? selectedWebFamilies(Array(rest.dropFirst())) : families
+        } else if rest.first == "--host" {
             // The host's own tests that run a host, and no conformance family.
             selected = webInBrowserClasses
         } else if !rest.isEmpty {
             // A family named - Button, TextField - runs its conformance alone.
-            selected = rest.flatMap { $0.split(separator: ",").map { "\(webConformanceClass)/test\($0)" } }
+            selected = selectedWebFamilies(rest)
         } else {
             let families = try listWebTests(node: node, runScript: runScript, relay: relay, program: program)
                 .filter { $0.hasPrefix("\(webConformanceClass)/") }
@@ -781,6 +821,20 @@ struct StateUICommand {
             node, [browserScript.path, browser.path, program.path, selected.joined(separator: ",")],
             cwd: package
         ))
+    }
+
+    /// The conformance tests a browser run names: a family (`Button`), or a full `Class/test`.
+    private static func selectedWebFamilies(_ names: [String]) -> [String] {
+        names.flatMap { name in
+            name.split(separator: ",").map { raw -> String in
+                let text = String(raw).trimmingCharacters(in: .whitespaces)
+                if text.contains("/") { return text }
+                if let tail = text.range(of: ".test", options: .backwards) {
+                    return text.replacingCharacters(in: tail, with: "/test")
+                }
+                return "\(webConformanceClass)/test\(text)"
+            }
+        }
     }
 
     /// Google Chrome or Chromium, or the one `STATEUI_BROWSER` names.
@@ -956,6 +1010,16 @@ struct StateUICommand {
     /// The host `--host` names, refused when it names none of StateUI's hosts.
     /// An option given explicitly is never dropped: a mistyped host is a mistake,
     /// not a request for the checkout's default.
+    /// Whether `--host` asks for every host this machine offers.
+    static func isAllAvailableHost(_ raw: String) -> Bool {
+        let normalized = raw
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .replacingOccurrences(of: "-", with: "")
+            .replacingOccurrences(of: "_", with: "")
+            .lowercased()
+        return normalized == "allavailable" || normalized == "all"
+    }
+
     static func hostOption(_ parsed: ParsedCommand, default fallback: HostID? = nil) throws -> HostID? {
         guard let raw = parsed.value("host") else { return fallback }
         guard let host = HostID(parsing: raw) else {
@@ -1029,6 +1093,37 @@ struct StateUICommand {
             if let url = outcome.url { print("url: \(url)") }
             for note in outcome.notes { print("note: \(note)") }
         }
+    }
+
+    static func emitAll(_ plans: [HostTestPlan], json: Bool) {
+        if json {
+            emit(plans, json: true)
+            return
+        }
+        for plan in plans {
+            print("=== \(plan.host.label)\(plan.device.map { " · \($0)" } ?? "") ===")
+            print(describe(plan.plan))
+            print("")
+        }
+    }
+
+    static func emitReport(_ report: TestReport, json: Bool) {
+        if json {
+            emit(report, json: true)
+            return
+        }
+        for run in report.runs {
+            print("=== \(run.host.label)\(run.device.map { " · \($0)" } ?? "") ===")
+            print("status: \(run.status.rawValue)")
+            if let executed = run.executed {
+                print("executed: \(executed) tests, \(run.failures) failures")
+            } else if run.failures > 0 {
+                print("failures: \(run.failures)")
+            }
+            for test in run.failedTests { print("failed: \(test)") }
+            if let note = run.note, !note.isEmpty { print("note: \(note)") }
+        }
+        print("summary: \(report.passed) passed, \(report.failed) failed")
     }
 
     static func describe(_ plan: BuildPlan) -> String {
@@ -1186,7 +1281,7 @@ struct StateUICommand {
       devices --host H           List a host's devices.
       browsers                   List the Web host's browsers.
       build [options]            Build an application.
-      test [options]             Run a host's tests.
+      test [options]             Run a host's tests or conformance families.
       run [options]              Build and run an application.
       deploy [options]           Build and lay an application out.
       stop [--host web]          Give up the page a Web run left serving.
@@ -1200,11 +1295,11 @@ struct StateUICommand {
       rpc --stdio                Speak JSON-RPC 2.0 over stdio.
 
     OPTIONS:
-      --application NAME  --host H  --configuration debug|release
+      --application NAME  --host H|all-available  --configuration debug|release
       --device ID         --device-host H  --browser ID  --port N
       --project PATH      --destination PATH  --architecture ARCH  --apps-dir PATH
       --checkout PATH     --minimum V  --suite native|foundation|host  --filter NAMES
-      --in-browser  --build-only  --update-exports  --stale
+      --conformance  --in-browser  --build-only  --update-exports  --stale
       --dry-run  --detach  --prepare  --no-build  --json  --quiet  --verbose
     """
 }

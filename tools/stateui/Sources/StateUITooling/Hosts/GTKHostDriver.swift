@@ -90,20 +90,23 @@ public struct GTKHostDriver: HostDriver {
         let builder = swiftBuilder
         let swift = try builder.swift()
         let marks = request.conformanceEnvironment.merging(["STATEUI_HOST": id.rawValue]) { _, new in new }
+        let effectiveFilter = request.conformanceFilter(for: id) ?? request.filter
 
         var suites: [TestSuitePlan] = []
         // The foundation's own tests on Linux - its C library and its thread
         // numbers, the Glibc branches no other machine runs - before the host's.
-        if request.filter == nil {
+        if effectiveFilter == nil {
             suites.append(try NativeTestSuites.foundation(builder: builder, checkout: checkout, platform: platform))
         }
         let package = checkout.appendingPathComponent("lib/StateUI/StateUI.GTK/Testing", isDirectory: true)
         if FileSystem.isDirectory(package) {
             var arguments = ["test", "--package-path", package.path]
-            if let filter = request.filter { arguments.append(contentsOf: ["--filter", filter]) }
+            if let filter = effectiveFilter { arguments.append(contentsOf: ["--filter", filter]) }
             suites.append(TestSuitePlan(
                 name: "lib/StateUI/StateUI.GTK/Testing",
-                detail: "the GTK host's own tests and every conformance family, each verdict held to its marks",
+                detail: request.conformance
+                    ? "the GTK host's conformance families, each verdict held to its marks"
+                    : "the GTK host's own tests and every conformance family, each verdict held to its marks",
                 steps: [HostSupport.run(
                     swift, arguments, cwd: package, label: "Test the GTK host",
                     environment: marks

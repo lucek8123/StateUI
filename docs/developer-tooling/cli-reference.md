@@ -14,15 +14,16 @@ the tool says about itself. Diagnostics always go to stderr.
 
 ## Options
 
-Value options: `--project PATH`, `--host H`, `--configuration debug|release`,
-`--application NAME`, `--device ID`, `--device-host H`, `--browser ID`,
-`--port N`, `--filter NAMES`, `--suite native|foundation|host`,
-`--architecture ARCH`, `--destination PATH`, `--apps-dir PATH`, `--checkout PATH`,
-`--minimum V`, `--name NAME`, `--transport stdio`.
+Value options: `--project PATH`, `--host H|all-available`,
+`--configuration debug|release`, `--application NAME`, `--device ID`,
+`--device-host H`, `--browser ID`, `--port N`, `--filter NAMES`,
+`--suite native|foundation|host`, `--architecture ARCH`, `--destination PATH`,
+`--apps-dir PATH`, `--checkout PATH`, `--minimum V`, `--name NAME`,
+`--transport stdio`.
 
 Flags: `--json`, `--quiet`, `--verbose`, `--help`, `--dry-run`, `--detach`,
-`--prepare`, `--no-build`, `--build-only`, `--in-browser`, `--update-exports`,
-`--stale`, `--all`, `--stdio`.
+`--prepare`, `--no-build`, `--build-only`, `--in-browser`, `--conformance`,
+`--update-exports`, `--stale`, `--all`, `--stdio`.
 
 An option that no command reads is refused rather than accepted and ignored, and
 `--help` beside any command prints the usage instead of running the command.
@@ -42,7 +43,7 @@ Anything after `--` is passed to the toolchain beside the application's own name
 | `devices --host H` | list a host's devices |
 | `browsers` | list the Web host's browsers |
 | `build [--application N] [--host H] [--configuration C] [--device ID] [--browser ID] [--architecture ARCH] [--dry-run] [extra...]` | build a host's head |
-| `test [--application N] [--host H] [--configuration C] [--device ID] [--filter T] [--suite S] [--in-browser] [--build-only] [--update-exports] [--stale] [--dry-run]` | run a host's suites |
+| `test [--application N] [--host H\|all-available] [--configuration C] [--device ID] [--filter T] [--suite S] [--conformance] [--in-browser] [--build-only] [--update-exports] [--stale] [--dry-run]` | run a host's suites, or its conformance families |
 | `run [--application N] [--host H] [--configuration C] [--device ID] [--browser ID] [--port N] [--detach] [--prepare] [--no-build] [--dry-run]` | build, then run; `--prepare` holds the launch for a debugger and writes the host's facts file. A Web run detaches its server and writes `server.json` beside the site, naming the port and the process that serves it. |
 | `deploy [--application N] [--host H] [--configuration C] [--destination PATH] [--architecture ARCH] [--dry-run]` | lay a release build out |
 | `stop [NAME] [--host web] [--project PATH] [--application N]` | give up the page a Web run left serving: the detached server named in the site's `server.json` is stopped and its facts removed. Naming another host is refused, and a checkout serving no page is refused as `notServing`. |
@@ -56,6 +57,23 @@ Anything after `--` is passed to the toolchain beside the application's own name
 | `debug plan [--application N] [--host H] [--configuration C] [--device ID] [--browser ID]` | print the adapter, program, arguments, environment, attach commands and the build that prepares them |
 | `debug prepare [--application N] [--host H] [--configuration C] [--device ID] [--browser ID] [--dry-run]` | build and launch what the plan names, and write `debugger.json` where the debugger reads it |
 | `rpc --stdio` | JSON-RPC 2.0 server over stdio; see `protocol.md` |
+
+## Conformance
+
+`stateui test --conformance --host H` runs one host's conformance families
+instead of its own suite. `--filter Family` narrows it to one family (`Button`,
+`TextField`, ...); `--stale` runs only families whose verdicts stand at another
+revision; `--update-exports` writes them.
+
+`stateui test --conformance --host all-available` runs every host this machine
+offers, one default simulator, device or browser each, one after another. It
+never stops at the first failure: it ends with each host's passed/failed counts
+and the failed tests, and exits `1` if any failed. On Web the conformance
+families run in a browser; on the other hosts they run in the host's own suite.
+
+Without `--conformance`, `--host all-available` runs each host's default suite,
+one default device or browser each - the suites the `.scripts/<Host>/test-*`
+scripts run.
 
 ## Host notes
 

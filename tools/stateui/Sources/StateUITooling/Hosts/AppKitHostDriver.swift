@@ -116,13 +116,17 @@ public struct AppKitHostDriver: HostDriver {
             return TestPlan(application: context.application?.name, host: id, suites: [])
         }
         var arguments = ["test", "--package-path", package.path]
-        if let filter = request.filter { arguments.append(contentsOf: ["--filter", filter]) }
+        if let filter = request.conformanceFilter(for: id) ?? request.filter {
+            arguments.append(contentsOf: ["--filter", filter])
+        }
         let marks = request.conformanceEnvironment.merging(["STATEUI_HOST": id.rawValue]) { _, new in new }
         return TestPlan(
             application: context.application?.name, host: id,
             suites: [TestSuitePlan(
                 name: "lib/StateUI/StateUI.AppKit",
-                detail: "the AppKit host's own tests and every conformance family, each verdict held to its marks",
+                detail: request.conformance
+                    ? "the AppKit host's conformance families, each verdict held to its marks"
+                    : "the AppKit host's own tests and every conformance family, each verdict held to its marks",
                 steps: [HostSupport.run(
                     swift, arguments, cwd: package, label: "Test the AppKit host", environment: marks
                 )]

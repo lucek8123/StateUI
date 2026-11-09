@@ -78,7 +78,10 @@ public struct TestService: Sendable {
         return (workspace, plan)
     }
 
-    public func run(_ request: TestRequest, project: URL? = nil) async throws -> ExecutionOutcome {
+    public func run(
+        _ request: TestRequest, project: URL? = nil,
+        onOutput: (@Sendable (ProcessOutput) -> Void)? = nil
+    ) async throws -> ExecutionOutcome {
         let (workspace, plan) = try await plan(request, project: project)
         guard !plan.suites.isEmpty else {
             throw ToolingError.unsupportedHost(
@@ -100,7 +103,7 @@ public struct TestService: Sendable {
         for suite in plan.suites {
             let outcome = try await tooling.execute(
                 steps: suite.steps, actions: suite.actions, postSteps: suite.postSteps,
-                dryRun: request.dryRun
+                dryRun: request.dryRun, onOutput: onOutput
             )
             results.append(ExecutionOutcome(
                 status: outcome.status, duration: outcome.duration,

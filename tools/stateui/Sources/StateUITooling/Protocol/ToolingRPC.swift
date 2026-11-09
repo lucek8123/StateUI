@@ -330,6 +330,8 @@ public struct ToolingRPC: RPCHandling {
             device: params?["device"]?.stringValue,
             filter: params?["filter"]?.stringValue,
             suite: params?["suite"]?.stringValue,
+            conformance: params?["conformance"]?.boolValue ?? false,
+            allAvailableHosts: params?["allAvailableHosts"]?.boolValue ?? false,
             browser: params?["inBrowser"]?.boolValue ?? false,
             buildOnly: params?["buildOnly"]?.boolValue ?? false,
             architecture: params?["architecture"]?.stringValue,
@@ -337,11 +339,18 @@ public struct ToolingRPC: RPCHandling {
             staleOnly: params?["staleOnly"]?.boolValue ?? false,
             dryRun: params?["dryRun"]?.boolValue ?? false
         )
+        let service = TestService(tooling: tooling)
+        if request.allAvailableHosts {
+            if request.dryRun {
+                return try JSONValue(try await service.planAll(request, project: projectURL(params)))
+            }
+            return try JSONValue(try await service.runAll(request, project: projectURL(params)))
+        }
         if request.dryRun {
-            let (_, plan) = try await TestService(tooling: tooling).plan(request, project: projectURL(params))
+            let (_, plan) = try await service.plan(request, project: projectURL(params))
             return try JSONValue(plan)
         }
-        return try JSONValue(try await TestService(tooling: tooling).run(request, project: projectURL(params)))
+        return try JSONValue(try await service.run(request, project: projectURL(params)))
     }
 
     private func run(_ params: JSONValue?) async throws -> JSONValue {

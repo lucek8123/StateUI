@@ -165,7 +165,7 @@ public struct UIKitHostDriver: HostDriver {
             resources: package.appendingPathComponent("Resources", isDirectory: true)
         )
         var launchEnvironment = [
-            "SIMCTL_CHILD_STATEUI_FILTER": request.filter ?? "",
+            "SIMCTL_CHILD_STATEUI_FILTER": request.conformanceFilter(for: id) ?? request.filter ?? "",
             "SIMCTL_CHILD_STATEUI_UPDATE_EXPORTS": context.environment["STATEUI_UPDATE_EXPORTS"] ?? "",
             "SIMCTL_CHILD_STATEUI_STALE_ONLY": context.environment["STATEUI_STALE_ONLY"] ?? "",
         ]
@@ -189,7 +189,9 @@ public struct UIKitHostDriver: HostDriver {
             application: context.application?.name, host: id,
             suites: [TestSuitePlan(
                 name: "lib/StateUI/StateUI.UIKit/Tests",
-                detail: "the UIKit host's package, run as an application on \(destination.name)",
+                detail: request.conformance
+                    ? "the UIKit host's conformance families, run on \(destination.name)"
+                    : "the UIKit host's package, run as an application on \(destination.name)",
                 steps: steps, actions: bundleSteps.actions, postSteps: postSteps,
                 requiresDevice: true, host: id
             )]

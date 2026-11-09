@@ -79,10 +79,22 @@ public enum HostID: String, Codable, CaseIterable, Sendable, Hashable {
     public var developmentPlatforms: Set<ProjectPlatform> {
         switch self {
         case .appKit, .uiKit: return [.macOS]
-        case .android: return [.macOS, .linux]
+        case .android: return [.macOS, .linux, .windows]
         case .winUI: return [.windows]
         case .gtk: return [.linux]
         case .web: return [.macOS, .linux]
+        }
+    }
+
+    /// The XCTest class holding this host's conformance families.
+    public var conformanceClass: String {
+        switch self {
+        case .appKit: return "AppKitConformanceTests"
+        case .uiKit: return "UIKitConformanceTests"
+        case .android: return "AndroidConformanceTests"
+        case .winUI: return "WinUIConformanceTests"
+        case .gtk: return "GTKConformanceTests"
+        case .web: return "StateUIWebTests.WebConformanceTests"
         }
     }
 
