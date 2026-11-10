@@ -84,6 +84,12 @@ public struct TestService: Sendable {
     ) async throws -> ExecutionOutcome {
         let (workspace, plan) = try await plan(request, project: project)
         guard !plan.suites.isEmpty else {
+            if request.staleOnly {
+                return ExecutionOutcome(
+                    status: .succeeded,
+                    notes: ["Every conformance family's verdicts stand at its revision: nothing to run."]
+                )
+            }
             throw ToolingError.unsupportedHost(
                 "\(workspace.host?.label ?? "This host") has no test suite this tool can run.",
                 suggestion: "Run `stateui doctor --host \(workspace.host?.rawValue ?? "")`, or `stateui test --suite native`."
@@ -101,15 +107,32 @@ public struct TestService: Sendable {
 
         var results: [ExecutionOutcome] = []
         for suite in plan.suites {
-            let outcome = try await tooling.execute(
-                steps: suite.steps, actions: suite.actions, postSteps: suite.postSteps,
-                dryRun: request.dryRun, onOutput: onOutput
-            )
-            results.append(ExecutionOutcome(
-                status: outcome.status, duration: outcome.duration,
-                outputs: outcome.outputs + suite.outputs, factsFile: outcome.factsFile,
-                url: outcome.url, notes: outcome.notes
-            ))
+            var failure: Error?
+            var outcome: ExecutionOutcome?
+            do {
+                let executed = try await tooling.execute(
+                    steps: suite.steps, actions: suite.actions, postSteps: suite.postSteps,
+                    dryRun: request.dryRun, onOutput: onOutput
+                )
+                let checks = await TestCheckRunner(
+                    tooling: tooling, request: request, workspace: workspace
+                ).run(suite.checks)
+                let status: ExecutionOutcome.Status = checks.contains { $0.status == .failed }
+                    ? .failed : executed.status
+                outcome = ExecutionOutcome(
+                    status: status, duration: executed.duration,
+                    outputs: executed.outputs + suite.outputs, factsFile: executed.factsFile,
+                    url: executed.url, notes: executed.notes, checks: checks
+                )
+            } catch {
+                failure = error
+                _ = try? await tooling.execute(
+                    steps: suite.onFailure, dryRun: request.dryRun, onOutput: onOutput
+                )
+            }
+            _ = try? await tooling.execute(steps: suite.cleanup, dryRun: request.dryRun, onOutput: onOutput)
+            if let failure { throw failure }
+            if let outcome { results.append(outcome) }
         }
         return Self.combine(results, notes: plan.suites.map(\.detail))
     }
@@ -127,7 +150,8 @@ public struct TestService: Sendable {
             status: status,
             duration: outcomes.reduce(0) { $0 + $1.duration },
             outputs: outcomes.flatMap(\.outputs),
-            notes: outcomes.flatMap(\.notes) + notes
+            notes: outcomes.flatMap(\.notes) + notes,
+            checks: outcomes.flatMap(\.checks)
         )
     }
 }

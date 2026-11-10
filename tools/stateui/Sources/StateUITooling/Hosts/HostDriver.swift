@@ -14,6 +14,9 @@ public protocol HostDriver: Sendable {
     /// The devices a head can run on. Empty where the host has none.
     func devices(_ context: ProjectContext) async throws -> [Device]
 
+    /// Starts a stopped device - an Android AVD, say - and returns it once it is ready.
+    func boot(device name: String, context: ProjectContext) async throws -> Device
+
     /// The browsers a page can run in. Empty where the host has none.
     func browsers(_ context: ProjectContext) async throws -> [Browser]
 
@@ -27,6 +30,9 @@ public protocol HostDriver: Sendable {
 
 public extension HostDriver {
     func devices(_ context: ProjectContext) async throws -> [Device] { [] }
+    func boot(device name: String, context: ProjectContext) async throws -> Device {
+        throw ToolingError.unsupportedHost("\(id.label) has no device this tool can start.")
+    }
     func browsers(_ context: ProjectContext) async throws -> [Browser] { [] }
 
     func testPlan(_ request: TestRequest, context: ProjectContext) async throws -> TestPlan {

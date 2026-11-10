@@ -84,12 +84,12 @@ public struct ToolingRPC: RPCHandling {
     private static let stringParameters: Set<String> = [
         "project", "host", "deviceHost", "application", "configuration", "device",
         "browser", "architecture", "filter", "suite", "destination",
-        "appsDirectory", "checkout", "minimum", "name",
+        "appsDirectory", "checkout", "minimum", "name", "avd", "testAPK",
     ]
 
     private static let booleanParameters: Set<String> = [
         "dryRun", "detach", "prepare", "noBuild", "buildOnly", "inBrowser",
-        "updateExports", "staleOnly", "all",
+        "updateExports", "staleOnly", "all", "boot",
     ]
 
     private static let integerParameters: Set<String> = ["port", "protocolVersion"]
@@ -254,6 +254,16 @@ public struct ToolingRPC: RPCHandling {
               let host = HostID(parsing: raw) else {
             throw ToolingError.invalidArguments("devices needs a host.", suggestion: "Pass host: \"android\" or \"uikit\".")
         }
+        if params?["boot"]?.boolValue == true {
+            guard let avd = params?["avd"]?.stringValue ?? params?["device"]?.stringValue else {
+                throw ToolingError.invalidArguments(
+                    "devices boot needs an avd.", suggestion: "Pass avd: \"StateUI\"."
+                )
+            }
+            return try JSONValue(try await DeviceService(tooling: tooling).boot(
+                host: host, name: avd, project: projectURL(params)
+            ))
+        }
         let workspace = try tooling.resolve(project: projectURL(params), host: host)
         return try JSONValue(try await tooling.driver(for: host).devices(workspace.context))
     }
@@ -328,6 +338,8 @@ public struct ToolingRPC: RPCHandling {
             host: params?["host"]?.stringValue.flatMap(HostID.init(parsing:)),
             configuration: params?["configuration"]?.stringValue.flatMap(BuildConfiguration.init(parsing:)) ?? .debug,
             device: params?["device"]?.stringValue,
+            testAPK: params?["testAPK"]?.stringValue,
+            boot: params?["boot"]?.boolValue ?? false,
             filter: params?["filter"]?.stringValue,
             suite: params?["suite"]?.stringValue,
             conformance: params?["conformance"]?.boolValue ?? false,
@@ -359,6 +371,7 @@ public struct ToolingRPC: RPCHandling {
             host: params?["host"]?.stringValue.flatMap(HostID.init(parsing:)),
             configuration: params?["configuration"]?.stringValue.flatMap(BuildConfiguration.init(parsing:)) ?? .debug,
             device: params?["device"]?.stringValue,
+            boot: params?["boot"]?.boolValue ?? false,
             browser: params?["browser"]?.stringValue,
             port: params?["port"]?.intValue,
             dryRun: params?["dryRun"]?.boolValue ?? false,

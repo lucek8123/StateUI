@@ -162,7 +162,9 @@ public struct RealProcessExecutor: ProcessExecuting {
                 process.executableURL = invocation.executable
                 process.arguments = invocation.arguments
                 process.currentDirectoryURL = invocation.workingDirectory
-                process.environment = Environment.current.merging(invocation.environment)
+                process.environment = Environment.current.merging(
+                    invocation.environment, unsetting: invocation.unsetEnvironment
+                )
 
                 let stdout = Pipe()
                 let stderr = Pipe()

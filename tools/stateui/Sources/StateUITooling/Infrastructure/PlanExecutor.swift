@@ -13,7 +13,9 @@ public struct DetachedLauncher: Sendable {
         process.executableURL = invocation.executable
         process.arguments = invocation.arguments
         process.currentDirectoryURL = invocation.workingDirectory
-        process.environment = Environment.current.merging(invocation.environment)
+        process.environment = Environment.current.merging(
+            invocation.environment, unsetting: invocation.unsetEnvironment
+        )
         process.standardInput = FileHandle.nullDevice
 
         if let logFile {

@@ -19,11 +19,11 @@ Value options: `--project PATH`, `--host H|all-available`,
 `--device-host H`, `--browser ID`, `--port N`, `--filter NAMES`,
 `--suite native|foundation|host`, `--architecture ARCH`, `--destination PATH`,
 `--apps-dir PATH`, `--checkout PATH`, `--minimum V`, `--name NAME`,
-`--transport stdio`.
+`--avd NAME`, `--test-apk PATH`, `--transport stdio`.
 
 Flags: `--json`, `--quiet`, `--verbose`, `--help`, `--dry-run`, `--detach`,
 `--prepare`, `--no-build`, `--build-only`, `--in-browser`, `--conformance`,
-`--update-exports`, `--stale`, `--all`, `--stdio`.
+`--update-exports`, `--stale`, `--boot`, `--all`, `--stdio`.
 
 An option that no command reads is refused rather than accepted and ignored, and
 `--help` beside any command prints the usage instead of running the command.
@@ -41,10 +41,11 @@ Anything after `--` is passed to the toolchain beside the application's own name
 | `host [list \| get \| set H]` | read or select the default host |
 | `config [get \| list \| set]` | read or write the checkout's selection: host, application, configuration, device and its host, browser. An application no discovery answers is refused with the names that stand here. |
 | `devices --host H` | list a host's devices |
+| `devices boot --host H --avd NAME` | start a stopped AVD, wait until it has booted, and print its serial |
 | `browsers` | list the Web host's browsers |
 | `build [--application N] [--host H] [--configuration C] [--device ID] [--browser ID] [--architecture ARCH] [--dry-run] [extra...]` | build a host's head |
-| `test [--application N] [--host H\|all-available] [--configuration C] [--device ID] [--filter T] [--suite S] [--conformance] [--in-browser] [--build-only] [--update-exports] [--stale] [--dry-run]` | run a host's suites, or its conformance families |
-| `run [--application N] [--host H] [--configuration C] [--device ID] [--browser ID] [--port N] [--detach] [--prepare] [--no-build] [--dry-run]` | build, then run; `--prepare` holds the launch for a debugger and writes the host's facts file. A Web run detaches its server and writes `server.json` beside the site, naming the port and the process that serves it. |
+| `test [--application N] [--host H\|all-available] [--configuration C] [--device ID] [--boot] [--test-apk PATH] [--filter T] [--suite S] [--conformance] [--in-browser] [--build-only] [--update-exports] [--stale] [--dry-run]` | run a host's suites, or its conformance families |
+| `run [--application N] [--host H] [--configuration C] [--device ID] [--boot] [--browser ID] [--port N] [--detach] [--prepare] [--no-build] [--dry-run]` | build, then run; `--prepare` holds the launch for a debugger and writes the host's facts file. A Web run detaches its server and writes `server.json` beside the site, naming the port and the process that serves it. |
 | `deploy [--application N] [--host H] [--configuration C] [--destination PATH] [--architecture ARCH] [--dry-run]` | lay a release build out |
 | `stop [NAME] [--host web] [--project PATH] [--application N]` | give up the page a Web run left serving: the detached server named in the site's `server.json` is stopped and its facts removed. Naming another host is refused, and a checkout serving no page is refused as `notServing`. |
 | `size budgets --host web` | build each Web module for release, gzip it the way a page fetches it, and weigh it against the recorded budget |
@@ -63,7 +64,20 @@ Anything after `--` is passed to the toolchain beside the application's own name
 `stateui test --conformance --host H` runs one host's conformance families
 instead of its own suite. `--filter Family` narrows it to one family (`Button`,
 `TextField`, ...); `--stale` runs only families whose verdicts stand at another
-revision; `--update-exports` writes them.
+revision; `--update-exports` writes them. `--stale` and `--update-exports`
+imply `--conformance`.
+
+A suite owes proofs after its steps, and the run prints each as
+`check: <name>: passed|failed|skipped - <detail>`:
+
+- the host's public API record, `lib/StateUI/exports/api/<Module>.txt`, through
+  the core's `APISurfaceTests`;
+- its conformance verdicts under `lib/StateUI/exports/marks/<host>` (Android's
+  are pulled from the device, which reads no repository);
+- the Android test listing, so a test or case no runner names is refused.
+
+A filtered run holds nothing to the exports; a stale run compares only the
+families it ran, by their verdicts rather than the line naming the revision.
 
 `stateui test --conformance --host all-available` runs every host this machine
 offers, one default simulator, device or browser each, one after another. It
@@ -87,12 +101,15 @@ AppKit - `resvg` must be on `PATH`; the CLI draws the application's SVGs and
 adaptive icon with it.
 
 `devices --host android` lists attached devices and emulators, a running
-emulator by its AVD name, and AVDs that are stopped. `build`, `run`, `test` and
-`deploy` take `--device`; with one device attached it is implied, and
-`--architecture x86_64|arm64-v8a` builds for a device that is not attached. The
-CLI fetches Gradle 9.4.1 on first use and copies the Swift runtime libraries
-the head needs into the APK. The older `.scripts/Android` shell path is not
-needed.
+emulator by its AVD name, and AVDs that are stopped. `devices boot --host
+android --avd NAME` starts a stopped AVD, waits until it has booted, and prints
+its serial. `build`, `run`, `test` and `deploy` take `--device`; a name that is
+a stopped AVD is refused unless `--boot` starts it first. With one device
+attached it is implied, and `--architecture x86_64|arm64-v8a` builds for a
+device that is not attached. `test --test-apk PATH` installs a test APK built
+elsewhere instead of building one. The CLI fetches Gradle 9.4.1 on first use and
+copies the Swift runtime libraries the head needs into the APK. The older
+`.scripts/Android` shell path is not needed.
 
 ## Output and exit codes
 

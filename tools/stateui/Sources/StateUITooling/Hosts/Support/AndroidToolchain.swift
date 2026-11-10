@@ -42,6 +42,25 @@ public struct AndroidToolchain: Sendable {
     public var adbPath: String { adb.path }
     public var gradlePath: String? { gradle?.path }
 
+    /// The NDK's sysroot, which finds its C headers. The Swift SDK's own `ndk-sysroot` names it only after
+    /// its setup script has run; the NDK names it itself.
+    public var sysroot: URL? {
+        FileSystem.children(ndk.appendingPathComponent("toolchains/llvm/prebuilt"))
+            .map { $0.appendingPathComponent("sysroot") }
+            .first(where: FileSystem.isDirectory)
+    }
+
+    /// The NDK's clang resource headers - `stddef.h`, `semaphore.h` - which the Swift SDK's `clang` link
+    /// names only after its setup script has run.
+    public var clangInclude: URL? {
+        guard let prebuilt = FileSystem.children(ndk.appendingPathComponent("toolchains/llvm/prebuilt"))
+            .first(where: FileSystem.isDirectory) else { return nil }
+        return FileSystem.children(prebuilt.appendingPathComponent("lib/clang"))
+            .sorted { Version.compare($0.lastPathComponent, $1.lastPathComponent) < 0 }
+            .last
+            .map { $0.appendingPathComponent("include") }
+    }
+
     public static func discover(
         environment: Environment, platform: Platform, runner: CommandRunner
     ) async throws -> AndroidToolchain {

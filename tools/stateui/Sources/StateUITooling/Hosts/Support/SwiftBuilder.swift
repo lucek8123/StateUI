@@ -127,6 +127,25 @@ public struct SwiftBuilder: Sendable {
         return URL(fileURLWithPath: line.trimmingCharacters(in: .whitespaces))
     }
 
+    /// The paths a Swift SDK was configured with: `sdkRootPath`, `swiftResourcesPath`, and the rest of
+    /// `swift sdk configure --show-configuration`. A build for another platform names them to its API record.
+    public func swiftSDKConfiguration(id: String, triple: String? = nil) async -> [String: String] {
+        guard let swift = try? swift() else { return [:] }
+        var arguments = ["sdk", "configure", "--show-configuration", id]
+        if let triple { arguments.append(triple) }
+        guard let output = await runner.output(
+            swift, arguments, label: "swift sdk configure --show-configuration"
+        ) else { return [:] }
+        var values: [String: String] = [:]
+        for line in output.split(whereSeparator: \.isNewline) {
+            guard let colon = line.firstIndex(of: ":") else { continue }
+            let key = line[..<colon].trimmingCharacters(in: .whitespaces)
+            let value = line[line.index(after: colon)...].trimmingCharacters(in: .whitespaces)
+            if !key.isEmpty { values[key] = value }
+        }
+        return values
+    }
+
     public func xcodeSDKPath(_ name: String) async -> URL? {
         guard let xcrun = runner.which("xcrun"),
               let output = await runner.output(xcrun, ["--sdk", name, "--show-sdk-path"], label: "xcrun --show-sdk-path"),

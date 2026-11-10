@@ -12,11 +12,16 @@ public struct AndroidHostDriver: HostDriver {
     let runner: CommandRunner
     let environment: Environment
     let platform: Platform
+    let launcher: DetachedLauncher
 
-    public init(runner: CommandRunner, environment: Environment = .current, platform: Platform = .current) {
+    public init(
+        runner: CommandRunner, environment: Environment = .current,
+        platform: Platform = .current, launcher: DetachedLauncher = DetachedLauncher()
+    ) {
         self.runner = runner
         self.environment = environment
         self.platform = platform
+        self.launcher = launcher
     }
 
     private var swiftBuilder: SwiftBuilder {
@@ -54,6 +59,86 @@ public struct AndroidHostDriver: HostDriver {
         return await deviceList(toolchain)
     }
 
+    // MARK: - Boot
+
+    /// Starts an AVD with the emulator, detached, and waits until Android reports the boot complete.
+    public func boot(device name: String, context: ProjectContext) async throws -> Device {
+        let toolchain = try await discover()
+        guard let emulator = toolchain.emulator else {
+            throw ToolingError.toolchainMissing(
+                "The Android emulator was not found.",
+                context: ["sdk": toolchain.sdk.path],
+                suggestion: "Install the Android emulator with the SDK Manager."
+            )
+        }
+        let listed = await deviceList(toolchain)
+        if let running = listed.first(where: { $0.name == name && $0.kind != .avd }) {
+            return running
+        }
+        guard listed.contains(where: { $0.kind == .avd && $0.name == name }) else {
+            throw ToolingError.deviceNotFound(
+                "No AVD named \(name).",
+                context: ["avds": listed.filter { $0.kind == .avd }.map(\.name).joined(separator: ", ")],
+                suggestion: "Run `stateui devices --host android` to list them."
+            )
+        }
+        let before = Set(await emulatorSerials(toolchain))
+        let log = context.project.root.appendingPathComponent(".stateui/emulators/\(name).log")
+        try launcher.launch(
+            ProcessInvocation(
+                executable: emulator,
+                arguments: ["-avd", name, "-no-snapshot-save", "-no-boot-anim"],
+                workingDirectory: context.project.root, label: "Boot \(name)"
+            ),
+            logFile: log
+        )
+        for _ in 0..<120 {
+            for serial in await emulatorSerials(toolchain) where !before.contains(serial) {
+                guard await runningAVD(serial, toolchain: toolchain) == name else { continue }
+                if await bootCompleted(serial, toolchain: toolchain) {
+                    return Device(
+                        id: serial, name: name, host: id, kind: .emulator,
+                        platform: "Android", state: "device"
+                    )
+                }
+            }
+            try await Task.sleep(nanoseconds: 2_000_000_000)
+        }
+        throw ToolingError.deviceNotFound(
+            "\(name) did not boot within four minutes.",
+            context: ["avd": name, "log": log.path],
+            suggestion: "Read the emulator's log at \(log.path)."
+        )
+    }
+
+    private func emulatorSerials(_ toolchain: AndroidToolchain) async -> [String] {
+        guard let output = await runner.output(
+            toolchain.adb, ["devices"], label: "adb devices"
+        ) else { return [] }
+        return output.split(whereSeparator: \.isNewline).compactMap { line in
+            let fields = line.split(whereSeparator: { $0.isWhitespace })
+            guard let serial = fields.first, serial.hasPrefix("emulator-") else { return nil }
+            return String(serial)
+        }
+    }
+
+    private func runningAVD(_ serial: String, toolchain: AndroidToolchain) async -> String? {
+        guard let output = await runner.output(
+            toolchain.adb, ["-s", serial, "emu", "avd", "name"], label: "adb emu avd name"
+        ) else { return nil }
+        return output.split(whereSeparator: \.isNewline)
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .first { !$0.isEmpty && $0 != "OK" }
+    }
+
+    private func bootCompleted(_ serial: String, toolchain: AndroidToolchain) async -> Bool {
+        guard let output = await runner.output(
+            toolchain.adb, ["-s", serial, "shell", "getprop", "sys.boot_completed"],
+            label: "adb getprop sys.boot_completed"
+        ) else { return false }
+        return output.trimmingCharacters(in: .whitespacesAndNewlines) == "1"
+    }
+
     // MARK: - Build
 
     public func buildPlan(_ request: BuildRequest, context: ProjectContext) async throws -> BuildPlan {
@@ -89,52 +174,143 @@ public struct AndroidHostDriver: HostDriver {
                 context: context, extra: [], installGradle: !request.dryRun
             )
             let apk = apkURL(build.outputs.first, package: package, product: product, configuration: .debug)
+            let record = await apiRecordCheck(
+                product: product, package: package, abi: abi, toolchain: toolchain, checkout: checkout
+            )
             return TestPlan(
                 application: context.application?.name, host: id,
                 suites: [TestSuitePlan(
                     name: "lib/StateUI/StateUI.Android/Tests",
                     detail: "the Android host's package, packaged for \(abi); it runs on a device elsewhere",
                     steps: build.steps, actions: build.actions, postSteps: build.postSteps,
-                    host: id, outputs: [apk]
+                    host: id, outputs: [apk], checks: record.map { [$0] } ?? []
                 )]
             )
         }
-        let serial = try await serial(request.device, toolchain: toolchain)
-        let abi = try await deviceABI(serial: serial, toolchain: toolchain)
-        let build = try await headPlan(
-            name: product, package: package, product: product,
-            configuration: .debug, abi: abi, toolchain: toolchain,
-            resources: package.appendingPathComponent("Resources", isDirectory: true),
-            context: context, extra: [], installGradle: !request.dryRun
+        let serial = try await serial(
+            request.device, boot: request.boot, context: context, toolchain: toolchain
         )
-        let apk = apkURL(build.outputs.first, package: package, product: product, configuration: .debug)
-        let namespace = packageName(package: package) ?? "com.stateui.android.tests"
-        var instrument = [
-            "shell", "am", "instrument", "-w",
-        ]
-        if let filter = request.conformanceFilter(for: id) ?? request.filter ?? request.suite {
-            instrument.append(contentsOf: ["-e", "filter", filter])
+        let abi = try await deviceABI(serial: serial, toolchain: toolchain)
+
+        var filter = request.conformanceFilter(for: id)
+        if request.staleOnly {
+            let stale = try ConformanceService(checkout: checkout).staleFamilies(host: .android)
+            guard !stale.isEmpty else {
+                return TestPlan(application: context.application?.name, host: id, suites: [])
+            }
+            filter = stale.map { "AndroidConformanceTests.test\($0)" }.joined(separator: ",")
         }
+        if filter == nil { filter = request.filter ?? request.suite }
+
+        let build: BuildPlan?
+        let apk: URL
+        if let testAPK = request.testAPK, !testAPK.isEmpty {
+            build = nil
+            apk = FileSystem.expand(testAPK)
+        } else {
+            let planned = try await headPlan(
+                name: product, package: package, product: product,
+                configuration: .debug, abi: abi, toolchain: toolchain,
+                resources: package.appendingPathComponent("Resources", isDirectory: true),
+                context: context, extra: [], installGradle: !request.dryRun
+            )
+            build = planned
+            apk = apkURL(planned.outputs.first, package: package, product: product, configuration: .debug)
+        }
+        let namespace = await packageName(apk: apk, toolchain: toolchain)
+            ?? packageName(package: package) ?? "com.stateui.android.tests"
+
+        var instrument = ["shell", "am", "instrument", "-w"]
+        if let filter { instrument.append(contentsOf: ["-e", "filter", filter]) }
         instrument.append("\(namespace)/stateui.android.test.StateUITestRunner")
-        var postSteps = build.postSteps
+
+        let stayOn = await runner.output(
+            toolchain.adb,
+            ["-s", serial, "shell", "settings", "get", "global", "stay_on_while_plugged_in"],
+            label: "the device's stay-awake setting"
+        )?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let awake = switch stayOn {
+        case "0": "false"
+        case "1": "ac"
+        case "2": "usb"
+        case "4": "wireless"
+        default: "true"
+        }
+
+        var postSteps = build?.postSteps ?? []
         postSteps.append(HostSupport.run(
             toolchain.adb, ["-s", serial, "install", "-r", apk.path],
             cwd: package, label: "Install the Android host's tests"
         ))
+        // The verdicts of a run before this one stay in the APK's files: none may stand for this run's.
+        postSteps.append(HostSupport.run(
+            toolchain.adb, ["-s", serial, "shell", "run-as", namespace, "rm", "-rf", "files/marks"],
+            cwd: package, label: "Clear the previous Android verdicts", allowFailure: true
+        ))
+        postSteps.append(HostSupport.run(
+            toolchain.adb, ["-s", serial, "shell", "svc", "power", "stayon", "usb"],
+            cwd: package, label: "Keep the Android screen awake", allowFailure: true
+        ))
+        postSteps.append(HostSupport.run(
+            toolchain.adb, ["-s", serial, "shell", "input", "keyevent", "KEYCODE_WAKEUP"],
+            cwd: package, label: "Wake the Android screen", allowFailure: true
+        ))
+        postSteps.append(HostSupport.run(
+            toolchain.adb, ["-s", serial, "shell", "wm", "dismiss-keyguard"],
+            cwd: package, label: "Dismiss the Android keyguard", allowFailure: true
+        ))
+        postSteps.append(HostSupport.run(
+            toolchain.adb, ["-s", serial, "logcat", "-c"],
+            cwd: package, label: "Clear the Android log", allowFailure: true
+        ))
         postSteps.append(HostSupport.run(
             toolchain.adb, ["-s", serial] + instrument,
             cwd: package, label: "Run the Android host's tests",
-            environment: context.environment.stateuiVariables, mode: .observe
+            environment: TestSession(request: request, context: context).environment(), mode: .observe
         ))
+
+        let checks: [TestCheck] = [
+            .androidTestListing(AndroidListingCheck(
+                package: package,
+                runner: package.appendingPathComponent("Sources/Support/AndroidTestRunner.swift")
+            )),
+            .conformanceExports(ConformanceExportsCheck(
+                host: id, device: serial, adb: toolchain.adb, package: namespace,
+                update: request.updateExports, staleOnly: request.staleOnly,
+                filtered: filter != nil && !request.staleOnly
+            )),
+        ]
+        var allChecks = checks
+        if build != nil, let record = await apiRecordCheck(
+            product: product, package: package, abi: abi, toolchain: toolchain, checkout: checkout
+        ) {
+            allChecks.insert(record, at: 0)
+        }
         return TestPlan(
             application: context.application?.name, host: id,
             suites: [TestSuitePlan(
                 name: "lib/StateUI/StateUI.Android/Tests",
-                detail: request.conformance
-                    ? "the Android host's conformance families, run by instrumentation on \(serial) (\(abi))"
-                    : "the Android host's package, run by instrumentation on \(serial) (\(abi))",
-                steps: build.steps, actions: build.actions, postSteps: postSteps,
-                requiresDevice: true, host: id
+                detail: request.staleOnly
+                    ? "only the conformance families whose verdicts stand at another revision"
+                    : request.conformance && filter != nil
+                        ? "the Android host's conformance families, run by instrumentation on \(serial) (\(abi))"
+                        : "the Android host's package, run by instrumentation on \(serial) (\(abi))",
+                steps: build?.steps ?? [], actions: build?.actions ?? [], postSteps: postSteps,
+                requiresDevice: true, host: id, checks: allChecks,
+                cleanup: [HostSupport.run(
+                    toolchain.adb, ["-s", serial, "shell", "svc", "power", "stayon", awake],
+                    cwd: package, label: "Restore the Android stay-awake setting", allowFailure: true
+                )],
+                onFailure: [
+                    HostSupport.run(
+                        toolchain.adb, ["-s", serial, "logcat", "-d", "-t", "200", "-v", "time"],
+                        cwd: package, label: "The Android log", allowFailure: true
+                    ),
+                    HostSupport.run(
+                        toolchain.adb, ["-s", serial, "shell", "dumpsys", "window"],
+                        cwd: package, label: "The Android window focus", allowFailure: true
+                    ),
+                ]
             )]
         )
     }
@@ -146,7 +322,9 @@ public struct AndroidHostDriver: HostDriver {
     ) async throws -> RunPlan {
         let application = try HostSupport.application(context)
         let toolchain = try await discover()
-        let serial = try await serial(request.device, toolchain: toolchain)
+        let serial = try await serial(
+            request.device, boot: request.boot, context: context, toolchain: toolchain
+        )
         let abi = try await deviceABI(serial: serial, toolchain: toolchain)
         let out = application.buildDirectory(for: id)
         let apk = apkURL(
@@ -319,6 +497,45 @@ public struct AndroidHostDriver: HostDriver {
     }
 
     // MARK: - Head plan
+
+    /// The test build's facade, held to `lib/StateUI/exports/api/StateUIAndroid.txt`: the build's bin, its
+    /// triple and SDK, and the maps that find its C modules - what `.scripts/Android/test-android.sh` records.
+    private func apiRecordCheck(
+        product: String, package: URL, abi: String, toolchain: AndroidToolchain, checkout: URL
+    ) async -> TestCheck? {
+        guard let triple = HostCompilation.androidTriple(for: abi) else { return nil }
+        let application = Application(
+            name: product, directory: package, manifest: package.appendingPathComponent("Package.swift"),
+            heads: [], checkout: checkout, bundleScript: nil
+        )
+        let bin = await swiftBuilder.binPath(
+            application: application, host: id, configuration: .debug,
+            scratch: application.buildDirectory(for: id), swiftSDK: toolchain.swiftSDKID,
+            triple: triple, executable: toolchain.swift
+        )
+        let configuration = await swiftBuilder.swiftSDKConfiguration(
+            id: toolchain.swiftSDKID, triple: triple
+        )
+        var arguments: [String] = []
+        if let resources = configuration["swiftResourcesPath"], !resources.isEmpty {
+            arguments.append(contentsOf: ["-resource-dir", resources])
+        }
+        // The Swift SDK's clang link names the NDK's headers only after its setup script ran; the NDK's own
+        // resource directory names them now.
+        if let include = toolchain.clangInclude {
+            arguments.append(contentsOf: ["-Xcc", "-I\(include.path)"])
+        }
+        arguments.append(contentsOf: [
+            "-Xcc",
+            "-fmodule-map-file=\(checkout.path)/lib/StateUI/StateUI.Android/Sources/CStateUIAndroid/include/module.modulemap",
+            "-Xcc",
+            "-fmodule-map-file=\(checkout.path)/lib/StateUI/StateUI.Host/CStateUIHost/module.modulemap",
+        ])
+        return .apiRecord([APIModule(
+            name: "StateUIAndroid", modules: bin, triple: triple,
+            sdk: toolchain.sysroot?.path ?? configuration["sdkRootPath"], arguments: arguments
+        )])
+    }
 
     private func headPlan(
         name: String, package: URL, product: String, configuration: BuildConfiguration,
@@ -603,8 +820,35 @@ public struct AndroidHostDriver: HostDriver {
         return found
     }
 
-    private func serial(_ requested: String?, toolchain: AndroidToolchain) async throws -> String {
-        if let requested, !requested.isEmpty { return requested }
+    private func serial(
+        _ requested: String?, boot: Bool = false, context: ProjectContext? = nil,
+        toolchain: AndroidToolchain
+    ) async throws -> String {
+        if let requested, !requested.isEmpty {
+            let listed = await deviceList(toolchain)
+            if let attached = listed.first(where: {
+                ($0.id == requested || $0.name == requested) && $0.kind != .avd
+            }) {
+                return attached.id
+            }
+            if listed.contains(where: { $0.name == requested && $0.kind == .avd }) {
+                guard boot else {
+                    throw ToolingError.deviceNotFound(
+                        "\(requested) is an AVD that is not running.",
+                        context: ["avd": requested],
+                        suggestion: "Start it with --boot, or `stateui devices boot --host android --avd \(requested)`."
+                    )
+                }
+                guard let context else {
+                    throw ToolingError.deviceNotFound(
+                        "\(requested) needs a project to boot in.",
+                        context: ["avd": requested]
+                    )
+                }
+                return try await self.boot(device: requested, context: context).id
+            }
+            return requested
+        }
         if let named = environment["ANDROID_SERIAL"], !named.isEmpty { return named }
         let attached = await deviceList(toolchain).filter { $0.kind == .physical || $0.kind == .emulator }
         switch attached.count {

@@ -13,10 +13,12 @@ public struct HostTestOutcome: Codable, Sendable {
     public let failures: Int
     public let failedTests: [String]
     public let note: String?
+    public let checks: [TestCheckOutcome]
 
     public init(
         host: HostID, device: String? = nil, status: ExecutionOutcome.Status, duration: Double = 0,
-        executed: Int? = nil, failures: Int = 0, failedTests: [String] = [], note: String? = nil
+        executed: Int? = nil, failures: Int = 0, failedTests: [String] = [], note: String? = nil,
+        checks: [TestCheckOutcome] = []
     ) {
         self.host = host
         self.device = device
@@ -26,6 +28,7 @@ public struct HostTestOutcome: Codable, Sendable {
         self.failures = failures
         self.failedTests = failedTests
         self.note = note
+        self.checks = checks
     }
 }
 
@@ -83,7 +86,8 @@ extension TestService {
                 runs.append(HostTestOutcome(
                     host: target.host, device: target.label, status: outcome.status,
                     duration: outcome.duration, executed: parsed.executed,
-                    failures: parsed.failures, failedTests: parsed.failed
+                    failures: parsed.failures, failedTests: parsed.failed,
+                    checks: outcome.checks
                 ))
             } catch {
                 let failure = error.toolingError

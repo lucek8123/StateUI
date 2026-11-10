@@ -164,11 +164,10 @@ public struct UIKitHostDriver: HostDriver {
             isDevice: false, sdkName: sdkName, configuration: .debug, context: context,
             resources: package.appendingPathComponent("Resources", isDirectory: true)
         )
-        var launchEnvironment = [
-            "SIMCTL_CHILD_STATEUI_FILTER": request.conformanceFilter(for: id) ?? request.filter ?? "",
-            "SIMCTL_CHILD_STATEUI_UPDATE_EXPORTS": context.environment["STATEUI_UPDATE_EXPORTS"] ?? "",
-            "SIMCTL_CHILD_STATEUI_STALE_ONLY": context.environment["STATEUI_STALE_ONLY"] ?? "",
-        ]
+        var launchEnvironment = TestSession(request: request, context: context)
+            .environment(prefix: "SIMCTL_CHILD_")
+        launchEnvironment["SIMCTL_CHILD_STATEUI_FILTER"] =
+            request.conformanceFilter(for: id) ?? request.filter ?? ""
         if let suite = request.suite { launchEnvironment["SIMCTL_CHILD_STATEUI_FILTER"] = suite }
         let steps = [build] + bundleSteps.steps
         var postSteps = bundleSteps.postSteps
@@ -189,11 +188,15 @@ public struct UIKitHostDriver: HostDriver {
             application: context.application?.name, host: id,
             suites: [TestSuitePlan(
                 name: "lib/StateUI/StateUI.UIKit/Tests",
-                detail: request.conformance
+                detail: request.conformance && !request.updateExports
                     ? "the UIKit host's conformance families, run on \(destination.name)"
                     : "the UIKit host's package, run as an application on \(destination.name)",
                 steps: steps, actions: bundleSteps.actions, postSteps: postSteps,
-                requiresDevice: true, host: id
+                requiresDevice: true, host: id,
+                checks: [.apiRecord([APIModule(
+                    name: "StateUIUIKit", modules: bin,
+                    triple: HostCompilation.uikitSimulatorTriple, sdk: sdk.path
+                )])]
             )]
         )
     }

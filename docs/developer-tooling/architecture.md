@@ -71,7 +71,13 @@ branch on strings.
 | `ProjectService` | Select and persist host, application, configuration, device and browser, and list a host's availability. |
 | `ToolchainService` | Probe native tools and produce per-host findings. |
 | `BuildService` | Ask the host driver for a `BuildPlan`, then execute or dry-run it. |
-| `TestService` | Plan and execute host and application suites. |
+| `TestService` | Plan and execute host and application suites, their cleanup and failure steps, and the checks they owe. |
+| `TestSession` | What one run stands on: the request, the checkout, and the `STATEUI_*` variables its host reads. |
+| `ConformanceService` | The revision a family's verdicts stand at, the families a host's conformance class runs, and those whose marks stand at another revision. |
+| `ExportService` | Hold a host's conformance verdicts to `lib/StateUI/exports`, or write them; Android's are pulled from the device. |
+| `APIReportService` | Hold each built module to its public API record through the core's `APISurfaceTests`. |
+| `TestCheckRunner` | Run a suite's checks: the API records, the conformance exports, the Android listing. |
+| `DeviceService` | Start a stopped device a host can run on - an Android AVD - and answer with it once it is ready. |
 | `RunService` | Plan and execute build plus launch; detached runs, and a fact file for a launch held for a debugger. |
 | `DeployService` | Plan and execute release layout into `artifacts/<app>/<platform>`. |
 | `DebugService` | Build and launch preparation, structured `DebugPlan` generation, and the facts file a debugger reads. |
@@ -86,8 +92,11 @@ The CLI and RPC server call these same services. Neither contains host logic.
 ### Host drivers (`Sources/StateUITooling/Hosts`)
 
 `HostDriver` is a protocol with a `HostID`, capabilities, availability,
-toolchain check, device/browser discovery, and planning methods for build,
-test, run, deploy and debug. Each driver returns plans; it does not execute.
+toolchain check, device/browser discovery, a `boot` for a stopped device, and
+planning methods for build, test, run, deploy and debug. Each driver returns
+plans; it does not execute. A `TestSuitePlan` may carry `checks`, `cleanup` and
+`onFailure` beside its steps: the proofs the suite owes, the steps that run
+whatever the outcome, and the diagnostics a failure prints.
 
 Drivers:
 

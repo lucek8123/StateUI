@@ -20,6 +20,8 @@ public struct ProcessInvocation: Codable, Sendable, Hashable {
     public let executable: URL
     public let arguments: [String]
     public let environment: [String: String]
+    /// Variables to remove from the environment the child would otherwise inherit.
+    public let unsetEnvironment: [String]
     public let workingDirectory: URL
     public let label: String
     public let captureOutput: Bool
@@ -30,12 +32,13 @@ public struct ProcessInvocation: Codable, Sendable, Hashable {
 
     public init(
         executable: URL, arguments: [String], environment: [String: String] = [:],
-        workingDirectory: URL, label: String, captureOutput: Bool = false,
+        unsetEnvironment: [String] = [], workingDirectory: URL, label: String, captureOutput: Bool = false,
         mode: ExecutionMode = .run, allowFailure: Bool = false
     ) {
         self.executable = executable
         self.arguments = arguments
         self.environment = environment
+        self.unsetEnvironment = unsetEnvironment
         self.workingDirectory = workingDirectory
         self.label = label
         self.captureOutput = captureOutput
@@ -188,11 +191,18 @@ public struct TestSuitePlan: Codable, Sendable {
     public let host: HostID?
     /// What the suite leaves behind - an APK built for another machine, say.
     public let outputs: [URL]
+    /// What the run must prove after its steps, such as the public API record or the conformance verdicts.
+    public let checks: [TestCheck]
+    /// Steps that run whether the suite passed or failed, such as putting a device's screen setting back.
+    public let cleanup: [ProcessInvocation]
+    /// Steps that run only after a failed step, such as the Android logcat and window focus.
+    public let onFailure: [ProcessInvocation]
 
     public init(
         name: String, detail: String, steps: [ProcessInvocation],
         actions: [FileAction] = [], postSteps: [ProcessInvocation] = [],
-        requiresDevice: Bool = false, host: HostID? = nil, outputs: [URL] = []
+        requiresDevice: Bool = false, host: HostID? = nil, outputs: [URL] = [],
+        checks: [TestCheck] = [], cleanup: [ProcessInvocation] = [], onFailure: [ProcessInvocation] = []
     ) {
         self.name = name
         self.detail = detail
@@ -202,6 +212,9 @@ public struct TestSuitePlan: Codable, Sendable {
         self.requiresDevice = requiresDevice
         self.host = host
         self.outputs = outputs
+        self.checks = checks
+        self.cleanup = cleanup
+        self.onFailure = onFailure
     }
 }
 
@@ -447,6 +460,10 @@ public struct TestRequest: Sendable {
     public var host: HostID?
     public var configuration: BuildConfiguration
     public var device: String?
+    /// A test APK built elsewhere, installed instead of building one.
+    public var testAPK: String?
+    /// Start the named AVD before the run, where the device names one.
+    public var boot: Bool
     public var filter: String?
     public var suite: String?
     /// Run the host's conformance families rather than its own suite.
@@ -468,8 +485,9 @@ public struct TestRequest: Sendable {
 
     public init(
         application: String? = nil, host: HostID? = nil, configuration: BuildConfiguration = .debug,
-        device: String? = nil, filter: String? = nil, suite: String? = nil, conformance: Bool = false,
-        allAvailableHosts: Bool = false, browser: Bool = false,
+        device: String? = nil, testAPK: String? = nil, boot: Bool = false,
+        filter: String? = nil, suite: String? = nil,
+        conformance: Bool = false, allAvailableHosts: Bool = false, browser: Bool = false,
         buildOnly: Bool = false, architecture: String? = nil, updateExports: Bool = false,
         staleOnly: Bool = false, dryRun: Bool = false
     ) {
@@ -477,6 +495,8 @@ public struct TestRequest: Sendable {
         self.host = host
         self.configuration = configuration
         self.device = device
+        self.testAPK = testAPK
+        self.boot = boot
         self.filter = filter
         self.suite = suite
         self.conformance = conformance
@@ -489,10 +509,14 @@ public struct TestRequest: Sendable {
         self.dryRun = dryRun
     }
 
-    /// The filter a conformance run of `host` uses: its class, or one family of it.
+    /// The filter a conformance run of `host` uses: its class, or one family of it. Writing every export runs
+    /// the host's whole suite instead - Android's declaration test writes `android.txt` - and a stale run names
+    /// the families itself.
     public func conformanceFilter(for host: HostID) -> String? {
         guard conformance else { return nil }
-        guard let filter, !filter.isEmpty else { return host.conformanceClass }
+        guard let filter, !filter.isEmpty else {
+            return updateExports && !staleOnly ? nil : host.conformanceClass
+        }
         if filter.contains(".") || filter.contains("/") { return filter }
         return "\(host.conformanceClass).test\(filter)"
     }
@@ -521,6 +545,8 @@ public struct RunRequest: Sendable {
     public var host: HostID?
     public var configuration: BuildConfiguration
     public var device: String?
+    /// Start the named AVD before the run, where the device names one.
+    public var boot: Bool
     public var browser: String?
     public var port: Int?
     public var dryRun: Bool
@@ -530,13 +556,14 @@ public struct RunRequest: Sendable {
 
     public init(
         application: String? = nil, host: HostID? = nil, configuration: BuildConfiguration = .debug,
-        device: String? = nil, browser: String? = nil, port: Int? = nil,
+        device: String? = nil, boot: Bool = false, browser: String? = nil, port: Int? = nil,
         dryRun: Bool = false, detach: Bool = false, prepareDebugger: Bool = false, noBuild: Bool = false
     ) {
         self.application = application
         self.host = host
         self.configuration = configuration
         self.device = device
+        self.boot = boot
         self.browser = browser
         self.port = port
         self.dryRun = dryRun
@@ -613,10 +640,13 @@ public struct ExecutionOutcome: Codable, Sendable {
     public let factsFile: URL?
     public let url: String?
     public let notes: [String]
+    /// The proofs the suite ran after its steps - the API record, the verdicts.
+    public let checks: [TestCheckOutcome]
 
     public init(
         status: Status, duration: Double = 0, outputs: [URL] = [],
-        factsFile: URL? = nil, url: String? = nil, notes: [String] = []
+        factsFile: URL? = nil, url: String? = nil, notes: [String] = [],
+        checks: [TestCheckOutcome] = []
     ) {
         self.status = status
         self.duration = duration
@@ -624,5 +654,6 @@ public struct ExecutionOutcome: Codable, Sendable {
         self.factsFile = factsFile
         self.url = url
         self.notes = notes
+        self.checks = checks
     }
 }

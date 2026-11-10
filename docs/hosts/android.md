@@ -452,6 +452,8 @@ alone, as above.
 The test APK can be built with no device attached:
 `stateui test Gallery --host android --build-only --architecture x86_64` builds
 it for that ABI and prints where it is. The CLI builds and installs the test APK
-itself for a normal run; an APK built elsewhere is installed with `adb install`.
-CI builds on macOS, where the build draws the pictures, and runs the suite on a
-Linux emulator.
+itself for a normal run; an APK built elsewhere is installed with `--test-apk
+PATH`, and the build's public API record is held after a normal build. A stopped
+AVD is started with `stateui devices boot --host android --avd StateUI`, or by
+naming it with `--device StateUI --boot` on `test` or `run`. CI builds on macOS,
+where the build draws the pictures, and runs the suite on a Linux emulator.

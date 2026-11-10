@@ -119,17 +119,32 @@ public struct AppKitHostDriver: HostDriver {
         if let filter = request.conformanceFilter(for: id) ?? request.filter {
             arguments.append(contentsOf: ["--filter", filter])
         }
-        let marks = request.conformanceEnvironment.merging(["STATEUI_HOST": id.rawValue]) { _, new in new }
+        let marks = TestSession(request: request, context: context)
+            .environment()
+            .merging(["STATEUI_HOST": id.rawValue]) { _, new in new }
+        let bin = await swiftBuilder.binPath(
+            application: Application(
+                name: "StateUIAppKit", directory: package,
+                manifest: package.appendingPathComponent("Package.swift"),
+                heads: [], checkout: checkout, bundleScript: nil
+            ),
+            host: id, configuration: .debug,
+            scratch: package.appendingPathComponent(".build", isDirectory: true)
+        )
         return TestPlan(
             application: context.application?.name, host: id,
             suites: [TestSuitePlan(
                 name: "lib/StateUI/StateUI.AppKit",
-                detail: request.conformance
+                detail: request.conformance && !request.updateExports
                     ? "the AppKit host's conformance families, each verdict held to its marks"
                     : "the AppKit host's own tests and every conformance family, each verdict held to its marks",
                 steps: [HostSupport.run(
                     swift, arguments, cwd: package, label: "Test the AppKit host", environment: marks
-                )]
+                )],
+                checks: [.apiRecord([
+                    APIModule(name: "StateUIAppKit", modules: bin),
+                    APIModule(name: "StateUITesting", modules: bin),
+                ])]
             )]
         )
     }

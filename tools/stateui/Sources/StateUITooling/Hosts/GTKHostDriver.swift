@@ -89,7 +89,9 @@ public struct GTKHostDriver: HostDriver {
         let checkout = try HostSupport.checkout(context)
         let builder = swiftBuilder
         let swift = try builder.swift()
-        let marks = request.conformanceEnvironment.merging(["STATEUI_HOST": id.rawValue]) { _, new in new }
+        let marks = TestSession(request: request, context: context)
+            .environment()
+            .merging(["STATEUI_HOST": id.rawValue]) { _, new in new }
         let effectiveFilter = request.conformanceFilter(for: id) ?? request.filter
 
         var suites: [TestSuitePlan] = []
@@ -104,16 +106,54 @@ public struct GTKHostDriver: HostDriver {
             if let filter = effectiveFilter { arguments.append(contentsOf: ["--filter", filter]) }
             suites.append(TestSuitePlan(
                 name: "lib/StateUI/StateUI.GTK/Testing",
-                detail: request.conformance
+                detail: request.conformance && !request.updateExports
                     ? "the GTK host's conformance families, each verdict held to its marks"
                     : "the GTK host's own tests and every conformance family, each verdict held to its marks",
                 steps: [HostSupport.run(
                     swift, arguments, cwd: package, label: "Test the GTK host",
                     environment: marks
-                )]
+                )],
+                checks: await apiRecordCheck(checkout: checkout, package: package).map { [$0] } ?? []
             ))
         }
         return TestPlan(application: context.application?.name, host: id, suites: suites)
+    }
+
+    /// The facade and the web view's backend, as the test build made them, held to their API records - with the
+    /// maps and pkg-config flags that find their C modules.
+    private func apiRecordCheck(checkout: URL, package: URL) async -> TestCheck? {
+        let application = Application(
+            name: "StateUIGTK", directory: package, manifest: package.appendingPathComponent("Package.swift"),
+            heads: [], checkout: checkout, bundleScript: nil
+        )
+        let bin = await swiftBuilder.binPath(
+            application: application, host: id, configuration: .debug,
+            scratch: package.appendingPathComponent(".build", isDirectory: true)
+        )
+        var arguments: [String] = []
+        for map in [
+            "StateUI/StateUI.GTK/Sources/CStateUIGTK",
+            "StateUI/StateUI.GTK/Sources/CStateUISoup",
+            "StateUI/StateUI.Host/CStateUIHost",
+            "Backends/WebView.GTK/Sources/CWebKitGTK",
+        ] {
+            arguments.append(contentsOf: [
+                "-Xcc", "-fmodule-map-file=\(checkout.path)/lib/\(map)/module.modulemap",
+            ])
+        }
+        if let pkgConfig = runner.which("pkg-config"),
+           let flags = await runner.output(
+               pkgConfig, ["--cflags", "libadwaita-1", "libsoup-3.0", "webkitgtk-6.0"],
+               label: "pkg-config --cflags"
+           ) {
+            for flag in flags.split(whereSeparator: \.isWhitespace).map(String.init) where !flag.isEmpty {
+                arguments.append(contentsOf: ["-Xcc", flag])
+            }
+        }
+        return .apiRecord([
+            APIModule(name: "StateUIGTK", modules: bin, arguments: arguments),
+            APIModule(name: "StateUIWebViewGTK", modules: bin, arguments: arguments),
+        ])
     }
 
     public func runPlan(

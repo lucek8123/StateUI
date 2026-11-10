@@ -38,7 +38,7 @@ public enum CommandLineParser {
     public static let valueOptions: Set<String> = [
         "project", "host", "configuration", "device", "browser", "port", "filter",
         "suite", "architecture", "destination", "apps-dir", "checkout",
-        "name", "application", "transport", "minimum", "device-host",
+        "name", "application", "transport", "minimum", "device-host", "avd", "test-apk",
     ]
 
     /// Only options some command reads. An option nothing reads is refused rather
@@ -47,7 +47,7 @@ public enum CommandLineParser {
     public static let flagOptions: Set<String> = [
         "json", "quiet", "verbose", "dry-run", "help", "detach",
         "prepare", "no-build", "all", "stdio",
-        "build-only", "in-browser", "update-exports", "stale", "conformance",
+        "build-only", "in-browser", "update-exports", "stale", "conformance", "boot",
     ]
 
     public static func parse(_ arguments: [String]) throws -> ParsedCommand {

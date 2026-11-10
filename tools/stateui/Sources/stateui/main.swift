@@ -287,6 +287,23 @@ struct StateUICommand {
                 suggestion: "Use one of: \(HostID.allCases.map(\.rawValue).joined(separator: ", "))."
             )
         }
+        if parsed.positionals.contains("boot") {
+            guard let avd = parsed.value("avd") else {
+                throw ToolingError.invalidArguments(
+                    "devices boot needs --avd.",
+                    suggestion: "Try `stateui devices boot --host android --avd StateUI`."
+                )
+            }
+            let device = try await DeviceService(tooling: tooling).boot(
+                host: host, name: avd, project: parsed.value("project").map { FileSystem.expand($0) }
+            )
+            if parsed.flag("json") {
+                emit(device, json: true)
+            } else {
+                print("\(device.id)\t\(device.name)\t\(device.kind.rawValue)\t\(device.state ?? "")")
+            }
+            return
+        }
         let devices = try await ProjectService(tooling: tooling).devices(
             host: host, project: parsed.value("project").map { FileSystem.expand($0) }
         )
@@ -354,10 +371,16 @@ struct StateUICommand {
                 suggestion: "Drop --suite, or name one host with --host."
             )
         }
-        if allAvailableHosts, parsed.value("device") != nil {
+        if allAvailableHosts, parsed.value("device") != nil || parsed.flag("boot") {
             throw ToolingError.invalidArguments(
                 "--host all-available picks one default device for each host.",
-                suggestion: "Name one host with --host and --device, or drop --device."
+                suggestion: "Name one host with --host and --device, or drop --device and --boot."
+            )
+        }
+        if allAvailableHosts, parsed.value("test-apk") != nil {
+            throw ToolingError.invalidArguments(
+                "--host all-available runs each host's own build.",
+                suggestion: "Name one host with --host to install a test APK."
             )
         }
         let conformance = parsed.flag("conformance") || parsed.flag("stale") || parsed.flag("update-exports")
@@ -367,11 +390,28 @@ struct StateUICommand {
                 suggestion: "Drop --suite, or drop --conformance."
             )
         }
+        let host = allAvailableHosts ? nil : try hostOption(parsed)
+        if let host, host != .android {
+            if parsed.value("test-apk") != nil {
+                throw ToolingError.invalidArguments(
+                    "--test-apk installs an Android test APK.",
+                    suggestion: "Name --host android, or drop --test-apk."
+                )
+            }
+            if parsed.flag("boot") {
+                throw ToolingError.invalidArguments(
+                    "--boot starts an Android AVD.",
+                    suggestion: "Name --host android, or drop --boot."
+                )
+            }
+        }
         let request = TestRequest(
             application: named,
-            host: allAvailableHosts ? nil : try hostOption(parsed),
+            host: host,
             configuration: try configuration(tooling, parsed),
             device: parsed.value("device"),
+            testAPK: parsed.value("test-apk"),
+            boot: parsed.flag("boot"),
             filter: parsed.value("filter"), suite: suite,
             conformance: conformance,
             allAvailableHosts: allAvailableHosts,
@@ -400,6 +440,7 @@ struct StateUICommand {
         } else {
             let outcome = try await service.run(request, project: project)
             emitOutcome(outcome, json: parsed.flag("json"))
+            if outcome.status == .failed { exit(1) }
         }
     }
 
@@ -411,11 +452,19 @@ struct StateUICommand {
                 suggestion: "Run `stateui run \(named ?? "") --host <host>`."
             )
         }
+        let host = try hostOption(parsed)
+        if let host, host != .android, parsed.flag("boot") {
+            throw ToolingError.invalidArguments(
+                "--boot starts an Android AVD.",
+                suggestion: "Name --host android, or drop --boot."
+            )
+        }
         let request = RunRequest(
             application: named,
-            host: try hostOption(parsed),
+            host: host,
             configuration: try configuration(tooling, parsed),
-            device: parsed.value("device"), browser: parsed.value("browser"),
+            device: parsed.value("device"), boot: parsed.flag("boot"),
+            browser: parsed.value("browser"),
             port: parsed.value("port").flatMap(Int.init),
             dryRun: parsed.flag("dry-run"), detach: parsed.flag("detach"),
             prepareDebugger: parsed.flag("prepare"), noBuild: parsed.flag("no-build")
@@ -1092,6 +1141,10 @@ struct StateUICommand {
             if let facts = outcome.factsFile { print("facts: \(facts.path)") }
             if let url = outcome.url { print("url: \(url)") }
             for note in outcome.notes { print("note: \(note)") }
+            for check in outcome.checks {
+                let detail = check.detail.map { " - \($0)" } ?? ""
+                print("check: \(check.name): \(check.status.rawValue)\(detail)")
+            }
         }
     }
 
@@ -1122,6 +1175,10 @@ struct StateUICommand {
             }
             for test in run.failedTests { print("failed: \(test)") }
             if let note = run.note, !note.isEmpty { print("note: \(note)") }
+            for check in run.checks {
+                let detail = check.detail.map { " - \($0)" } ?? ""
+                print("check: \(check.name): \(check.status.rawValue)\(detail)")
+            }
         }
         print("summary: \(report.passed) passed, \(report.failed) failed")
     }
@@ -1142,6 +1199,9 @@ struct StateUICommand {
             for step in suite.steps { lines.append("    step: \(step.displayCommand)") }
             for action in suite.actions { lines.append("    file: \(action.summary)") }
             for step in suite.postSteps { lines.append("    after: \(step.displayCommand)") }
+            for check in suite.checks { lines.append("    check: \(check.summary)") }
+            for step in suite.cleanup { lines.append("    cleanup: \(step.displayCommand)") }
+            for step in suite.onFailure { lines.append("    on failure: \(step.displayCommand)") }
         }
         return lines.joined(separator: "\n")
     }
@@ -1279,6 +1339,7 @@ struct StateUICommand {
       hosts [list|info H]        List hosts and their availability, or describe one.
       host [list|get|set H]      Show or select the default host.
       devices --host H           List a host's devices.
+      devices boot --host H --avd NAME  Start an AVD and print its serial.
       browsers                   List the Web host's browsers.
       build [options]            Build an application.
       test [options]             Run a host's tests or conformance families.
@@ -1299,7 +1360,8 @@ struct StateUICommand {
       --device ID         --device-host H  --browser ID  --port N
       --project PATH      --destination PATH  --architecture ARCH  --apps-dir PATH
       --checkout PATH     --minimum V  --suite native|foundation|host  --filter NAMES
-      --conformance  --in-browser  --build-only  --update-exports  --stale
+      --avd NAME          --test-apk PATH
+      --conformance  --in-browser  --build-only  --update-exports  --stale  --boot
       --dry-run  --detach  --prepare  --no-build  --json  --quiet  --verbose
     """
 }

@@ -210,7 +210,9 @@ public struct WinUIHostDriver: HostDriver {
             return TestPlan(application: context.application?.name, host: id, suites: [])
         }
         let architecture = Self.architecture(nil, platform: platform)
-        let marks = request.conformanceEnvironment.merging(["STATEUI_HOST": id.rawValue]) { _, new in new }
+        let marks = TestSession(request: request, context: context)
+            .environment()
+            .merging(["STATEUI_HOST": id.rawValue]) { _, new in new }
 
         var suites: [TestSuitePlan] = []
         // The foundation's own tests on Windows - its C library and its thread
@@ -242,8 +244,7 @@ public struct WinUIHostDriver: HostDriver {
                 manifest: package.appendingPathComponent("Package.swift"),
                 heads: [], checkout: checkout, bundleScript: nil
             ),
-            host: id, configuration: request.configuration,
-            scratch: package.appendingPathComponent(".build", isDirectory: true)
+            host: id, configuration: .debug, scratch: scratch
         )
 
         // Each test runs in a process of its own, as WinUI keeps GDI objects of
@@ -270,11 +271,19 @@ public struct WinUIHostDriver: HostDriver {
         }
         postSteps.append(ProcessInvocation(
             executable: swift,
-            arguments: ["test", "--package-path", package.path, "--skip-build"] + narrowing,
+            arguments: [
+                "test", "--package-path", package.path, "--skip-build",
+                "--scratch-path", scratch.path,
+            ] + narrowing,
             environment: marks, workingDirectory: package,
             label: "Test the WinUI host", captureOutput: false
         ))
 
+        let maps = [
+            "-Xcc", "-fmodule-map-file=\(checkout.path)/lib/StateUI/StateUI.WinUI/Sources/CStateUIWinUI/include/module.modulemap",
+            "-Xcc", "-fmodule-map-file=\(checkout.path)/lib/Backends/WebView.WinUI/Relay/include/module.modulemap",
+            "-Xcc", "-fmodule-map-file=\(checkout.path)/lib/StateUI/StateUI.Host/CStateUIHost/module.modulemap",
+        ]
         suites.append(TestSuitePlan(
             name: "lib/StateUI/StateUI.WinUI/Testing",
             detail: request.conformance
@@ -282,7 +291,11 @@ public struct WinUIHostDriver: HostDriver {
                 : request.staleOnly
                     ? "only the conformance families whose verdicts stand at another revision"
                     : "the host's own tests; add --conformance, --stale or a filter to reach the conformance families",
-            steps: steps, postSteps: postSteps, host: id
+            steps: steps, postSteps: postSteps, host: id,
+            checks: [.apiRecord([
+                APIModule(name: "StateUIWinUI", modules: bin, arguments: maps),
+                APIModule(name: "StateUIWebViewWinUI", modules: bin, arguments: maps),
+            ])]
         ))
         return TestPlan(application: context.application?.name, host: id, suites: suites)
     }

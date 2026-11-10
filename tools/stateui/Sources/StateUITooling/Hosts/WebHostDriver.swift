@@ -228,7 +228,7 @@ public struct WebHostDriver: HostDriver {
         }
         let run = ProcessInvocation(
             executable: HostSupport.currentExecutable(environment: environment), arguments: runArguments,
-            environment: request.conformanceEnvironment,
+            environment: TestSession(request: request, context: context).environment(),
             workingDirectory: package, label: "Run the Web host's tests"
         )
         var steps: [ProcessInvocation] = [build]
@@ -241,9 +241,27 @@ public struct WebHostDriver: HostDriver {
                     ? "the suite is built for WebAssembly and not run, so another machine runs it"
                     : detail,
                 steps: steps, host: id,
-                outputs: request.buildOnly ? [program] : []
+                outputs: request.buildOnly ? [program] : [],
+                checks: [await apiRecordCheck(checkout: checkout, bin: bin, sdk: sdk)]
             )]
         )
+    }
+
+    /// The facade, as the WebAssembly build made it, held to `lib/StateUI/exports/api/StateUIWeb.txt`.
+    private func apiRecordCheck(checkout: URL, bin: URL, sdk: String) async -> TestCheck {
+        let configuration = await swiftBuilder.swiftSDKConfiguration(id: sdk)
+        var arguments: [String] = []
+        if let resources = configuration["swiftResourcesPath"], !resources.isEmpty {
+            arguments.append(contentsOf: ["-resource-dir", resources])
+        }
+        arguments.append(contentsOf: [
+            "-Xcc",
+            "-fmodule-map-file=\(checkout.path)/lib/StateUI/StateUI.Web/Sources/CStateUIWeb/module.modulemap",
+        ])
+        return .apiRecord([APIModule(
+            name: "StateUIWeb", modules: bin, triple: HostCompilation.webTriple,
+            sdk: configuration["sdkRootPath"], arguments: arguments
+        )])
     }
 
     public func lspEnvironment(_ context: ProjectContext) async throws -> LSPEnvironment {

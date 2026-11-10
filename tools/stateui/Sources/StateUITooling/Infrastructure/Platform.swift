@@ -91,6 +91,13 @@ public struct Environment: Sendable {
         values.merging(overrides) { _, new in new }
     }
 
+    /// `overrides` over the environment, without the variables `names` hand over to a child.
+    public func merging(_ overrides: [String: String], unsetting names: [String]) -> [String: String] {
+        var merged = values.merging(overrides) { _, new in new }
+        for name in names { merged.removeValue(forKey: name) }
+        return merged
+    }
+
     /// Every variable beginning with `STATEUI_`, which a run passes to the application.
     public var stateuiVariables: [String: String] {
         values.filter { $0.key.hasPrefix("STATEUI_") }
