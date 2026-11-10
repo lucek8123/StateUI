@@ -16,7 +16,6 @@
 #include <string>
 #include <vector>
 
-#include <winrt/Windows.Globalization.h>
 #include <winrt/Windows.Globalization.DateTimeFormatting.h>
 #include <winrt/Windows.UI.h>
 #include <winrt/Windows.UI.Text.h>
@@ -92,13 +91,12 @@ namespace {
                number(radius.BottomLeft);
     }
 
-    /// The day `time` falls on in the user's calendar, as the picker writes it.
+    /// The day `time` falls on, read as the picker's days are written (`dayOf`).
     std::string day(winrt::Windows::Foundation::DateTime const &time) {
-        winrt::Windows::Globalization::Calendar calendar;
-        calendar.ChangeCalendarSystem(winrt::Windows::Globalization::CalendarIdentifiers::Gregorian());
-        calendar.SetDateTime(time);
+        int32_t parts[3];
+        dayOf(time, parts);
         char words[16];
-        std::snprintf(words, sizeof words, "%04d-%02d-%02d", calendar.Year(), calendar.Month(), calendar.Day());
+        std::snprintf(words, sizeof words, "%04d-%02d-%02d", parts[0], parts[1], parts[2]);
         return words;
     }
 
@@ -416,7 +414,6 @@ namespace {
         if (what == "title") return narrow(bar.Title());
         if (what == "back") return flag(bar.IsBackButtonVisible());
         if (what == "paneToggle") return flag(bar.IsPaneToggleButtonVisible());
-        if (what == "subtitle") return narrow(bar.Subtitle());
         if (what == "icon") return winrt::to_string(sourceFile(bar.IconSource()));
         if (what == "background") return groundText(bar.Background());
         if (what == "foreground") return color(bar.Foreground());
@@ -540,7 +537,7 @@ namespace {
     }
 
     /// What a sheet's head shows: its title, and whether it offers the way back and the close button; what its card
-    /// stands on.
+    /// stands on; whether it holds a page.
     std::optional<std::string> sheetHead(controls::Grid const &sheet, std::string_view what) {
         auto card = sheet.Children().GetAt(1).as<controls::Border>();
         auto head = card.Child().as<controls::Grid>().Children().GetAt(0).as<controls::Grid>();
@@ -551,6 +548,11 @@ namespace {
         if (what == "actions")
             return actions(sheetActionEdges(sheet), [](auto const &button) { return narrow(button.Label()); }, ";", ";");
         if (what == "card") return number(card.ActualWidth()) + "," + number(card.ActualHeight());
+        if (what == "page") {
+            for (auto const &child : card.Child().as<controls::Grid>().Children())
+                if (controls::Grid::GetRow(child.as<xaml::FrameworkElement>()) == 1) return flag(true);
+            return flag(false);
+        }
         if (what == "background") return groundText(head.Background());
         if (what == "foreground") return color(head.Children().GetAt(1).as<controls::TextBlock>().Foreground());
         if (what == "ground") {
@@ -715,6 +717,7 @@ namespace {
         if (auto element = object.try_as<xaml::FrameworkElement>()) {
             if (what == "automationName") return narrow(xaml::Automation::AutomationProperties::GetName(metOf(object)));
             if (what == "flowDirection") return number(static_cast<int32_t>(element.FlowDirection()));
+            if (what == "language") return narrow(element.Language());
             if (what == "hitTestable") return flag(element.IsHitTestVisible());
             if (what == "zIndex") return number(controls::Canvas::GetZIndex(element));
             if (what == "clipped") {
