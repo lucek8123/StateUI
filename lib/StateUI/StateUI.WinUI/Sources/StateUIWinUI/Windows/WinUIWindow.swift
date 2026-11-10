@@ -117,6 +117,11 @@ final class WinUIWindow {
         activateFirstTime()
     }
 
+    /// Forgets the window was activated, so a page shown anew takes the keyboard again: what a test needs.
+    func forgetActivationForTesting() {
+        activated = false
+    }
+
     /// Hides the window as its scene goes behind another, or shows it again without activating it; one never shown
     /// is activated as it is first shown.
     func setHidden(_ hidden: Bool) {

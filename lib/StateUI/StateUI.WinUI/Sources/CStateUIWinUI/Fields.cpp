@@ -432,3 +432,11 @@ extern "C" void stateui_winui_search_submit_as_user(StateUIObjectRef handle) {
         report("submitting a search as the user");
     }
 }
+
+extern "C" void stateui_winui_text_submit_as_user(int64_t view) {
+    try {
+        callbacks.submitted(view);
+    } catch (...) {
+        report("submitting a field as the user");
+    }
+}

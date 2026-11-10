@@ -74,8 +74,18 @@ extern "C" bool stateui_winui_pixels(StateUIObjectRef handle, double const *poin
                 continue;
             }
             auto const *pixel = bytes + 4 * (static_cast<size_t>(y) * width + x);
-            argb[index] = static_cast<uint32_t>(pixel[3]) << 24 | static_cast<uint32_t>(pixel[2]) << 16
-                | static_cast<uint32_t>(pixel[1]) << 8 | pixel[0];
+            // `RenderTargetBitmap` writes premultiplied alpha: a red at 79% coverage is (202, 0, 0, 202), and the
+            // straight color the tree asked for is (255, 0, 0, 202).
+            auto alpha = static_cast<uint32_t>(pixel[3]);
+            auto red = static_cast<uint32_t>(pixel[2]);
+            auto green = static_cast<uint32_t>(pixel[1]);
+            auto blue = static_cast<uint32_t>(pixel[0]);
+            if (alpha > 0 && alpha < 255) {
+                red = red * 255 / alpha;
+                green = green * 255 / alpha;
+                blue = blue * 255 / alpha;
+            }
+            argb[index] = alpha << 24 | red << 16 | green << 8 | blue;
         }
         return true;
     } catch (...) {

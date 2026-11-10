@@ -119,7 +119,11 @@ extension WinUIDriver {
         renderer?.layOut()
         let placing = view is WinUILayoutView ? nil : view.placingLayout
         let room = placing ?? view
-        let place = placing.map { _ in (point.x + view.placedFrame.x, point.y + view.placedFrame.y) } ?? (point.x, point.y)
+        let place = placing.map { _ in
+            // A shape's own pixel: half a DIP in from its corner, where the corner's anti-aliasing would read as
+            // nothing at the exact edge.
+            (point.x + view.placedFrame.x + 0.5, point.y + view.placedFrame.y + 0.5)
+        } ?? (point.x, point.y)
         guard let argb = room.pixels(at: [place]).first, argb >> 24 > 0x80 else { return nil }
         return Self.color(argb | 0xFF00_0000)
     }

@@ -266,6 +266,30 @@ extern "C" void stateui_winui_window_activate(StateUIObjectRef handle) {
     }
 }
 
+/// Brings the window to the front even where Windows' foreground lock would keep `Activate` from it - as a test
+/// sending keys through `SendInput` needs. `AttachThreadInput` lends this thread the foreground thread's right.
+extern "C" void stateui_winui_window_force_foreground(StateUIObjectRef handle) {
+    try {
+        auto window = borrow<xaml::Window>(handle);
+        window.Activate();
+        auto hwnd = reinterpret_cast<HWND>(window.AppWindow().Id().Value);
+        if (GetForegroundWindow() == hwnd) return;
+        auto foreground = GetForegroundWindow();
+        auto foregroundThread = foreground ? GetWindowThreadProcessId(foreground, nullptr) : 0;
+        auto thisThread = GetCurrentThreadId();
+        bool attached = false;
+        if (foregroundThread && foregroundThread != thisThread) {
+            attached = AttachThreadInput(thisThread, foregroundThread, TRUE);
+        }
+        SetForegroundWindow(hwnd);
+        BringWindowToTop(hwnd);
+        SetFocus(hwnd);
+        if (attached) AttachThreadInput(thisThread, foregroundThread, FALSE);
+    } catch (...) {
+        report("bringing a window to the front");
+    }
+}
+
 extern "C" void stateui_winui_window_close(StateUIObjectRef handle) {
     try {
         borrow<xaml::Window>(handle).Close();

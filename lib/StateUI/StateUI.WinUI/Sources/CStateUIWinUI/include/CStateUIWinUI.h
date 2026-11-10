@@ -512,6 +512,8 @@ void stateui_winui_window_set_content(StateUIObjectRef window, StateUIObjectRef 
 void stateui_winui_window_set_chrome(StateUIObjectRef window, StateUIObjectRef titleBar, StateUIObjectRef menuBar,
                                      StateUIObjectRef tabs);
 void stateui_winui_window_activate(StateUIObjectRef window);
+/// Brings the window to the front as a test sending keys needs: `Activate`, then the foreground lock's way round.
+void stateui_winui_window_force_foreground(StateUIObjectRef window);
 void stateui_winui_window_close(StateUIObjectRef window);
 /// Hides the window, or shows it again without activating it.
 void stateui_winui_window_set_shown(StateUIObjectRef window, bool shown);
@@ -661,7 +663,7 @@ void stateui_winui_set_tooltip(StateUIObjectRef element, char const *utf8);
 /// modifiers sent as the system sends keys.
 void stateui_winui_set_shortcut(StateUIObjectRef element, int32_t key, int32_t modifiers, bool givesWayToTyping);
 bool stateui_winui_shortcut(StateUIObjectRef element, int32_t *key, int32_t *modifiers);
-void stateui_winui_send_keys(int32_t key, int32_t modifiers);
+bool stateui_winui_send_keys(int32_t key, int32_t modifiers);
 int32_t stateui_winui_tooltip(StateUIObjectRef element, char *utf8, int32_t capacity);
 
 StateUIObjectRef stateui_winui_panel_make(int64_t view);
@@ -1052,6 +1054,8 @@ void stateui_winui_search_type(StateUIObjectRef search, char const *utf8);
 
 /// Submits a search box's query as UI Automation does, its own button's way - what a test does.
 void stateui_winui_search_submit_as_user(StateUIObjectRef search);
+/// Submits a field as its Enter does, which WinUI raises only from the keyboard: what a test walks instead.
+void stateui_winui_text_submit_as_user(int64_t view);
 
 /// A shape drawn behind a layout's children: a rectangle, rounded or not, or an ellipse, filled and outlined.
 StateUIObjectRef stateui_winui_shape_make(StateUIOutline outline);

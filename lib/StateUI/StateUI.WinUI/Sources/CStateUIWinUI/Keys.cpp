@@ -9,6 +9,7 @@
 
 #include "Relay.h"
 
+#include <cstdio>
 #include <vector>
 
 #include <winrt/Microsoft.UI.Xaml.Input.h>
@@ -29,7 +30,7 @@ namespace {
     }
 
     /// The modifiers down, the key down and up, the modifiers up - as the system sends a shortcut's keys.
-    void sendKeys(int32_t key, int32_t modifiers) {
+    bool sendKeys(int32_t key, int32_t modifiers) {
         std::vector<INPUT> inputs;
         auto add = [&](WORD virtualKey, bool up) {
             INPUT input{};
@@ -46,7 +47,13 @@ namespace {
         add(static_cast<WORD>(key), true);
         for (int bit = 2; bit >= 0; --bit)
             if (modifiers & (1 << bit)) add(held[bit], true);
-        SendInput(static_cast<UINT>(inputs.size()), inputs.data(), sizeof(INPUT));
+        auto sent = SendInput(static_cast<UINT>(inputs.size()), inputs.data(), sizeof(INPUT));
+        if (sent != inputs.size()) {
+            std::fprintf(stderr, "stateui: SendInput sent %u of %zu keys, error %lu\n",
+                         sent, inputs.size(), GetLastError());
+            return false;
+        }
+        return true;
     }
 }
 
@@ -117,10 +124,11 @@ extern "C" bool stateui_winui_shortcut(StateUIObjectRef handle, int32_t *key, in
     }
 }
 
-extern "C" void stateui_winui_send_keys(int32_t key, int32_t modifiers) {
+extern "C" bool stateui_winui_send_keys(int32_t key, int32_t modifiers) {
     try {
-        sendKeys(key, modifiers);
+        return sendKeys(key, modifiers);
     } catch (...) {
         report("sending keys");
+        return false;
     }
 }

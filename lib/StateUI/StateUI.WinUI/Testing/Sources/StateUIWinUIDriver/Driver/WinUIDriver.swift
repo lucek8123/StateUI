@@ -145,9 +145,20 @@ final class WinUIDriver: HostDriver {
         case (.scroll(let target), let items as WinUIItemsView): scroll(items, to: target)
         case (.activate, _): try activate(element, view)
         case (.pressKeys(let shortcut), _):
-            // The keys sent as the system sends them, to the window in front.
+            // The keys sent as the system sends them, to the window in front: a test makes its window that window.
+            // A view holding the keyboard keeps it; with none, the chrome's title bar takes the key, as the window's
+            // own routing expects, and the page's content hears it.
             guard let spelled = WinUIKeys.spelled(shortcut) else { throw DriverCannot(act, on: element) }
-            stateui_winui_send_keys(spelled.key, spelled.modifiers)
+            if let target = (try? window(of: element)) ?? (try? window()) {
+                stateui_winui_window_force_foreground(target.handle)
+                if keyboardHolder() == nil {
+                    _ = stateui_winui_focus(target.titleBar.handle, true)
+                    WinUITestHost.pump(0.02)
+                }
+            }
+            guard stateui_winui_send_keys(spelled.key, spelled.modifiers) else {
+                throw DriverCannot(act, on: element)
+            }
         case (.toggle, let toggle as WinUIToggleView): toggle.toggle()
         case (.toggle, _) where element.type == .splitView: try window().titleBar.chose(-2)
         case (.slide(let value), let slider as WinUISliderView): slider.move(to: value)
@@ -165,13 +176,9 @@ final class WinUIDriver: HostDriver {
         case (.type(let words), let field as WinUITextInputView): type(words, into: field)
         case (.submit, let search as WinUISearchFieldView): stateui_winui_search_submit_as_user(search.handle)
         case (.submit, let field as WinUITextInputView) where element.type == .textField:
-            // Enter as the system sends it, to the field holding the keyboard: WinUI raises a text box's KeyDown from
-            // the keyboard alone.
-            guard let enter = WinUIKeys.spelled(KeyboardShortcut(.return, modifiers: [])) else {
-                throw DriverCannot(act, on: element)
-            }
-            _ = stateui_winui_focus(field.handle, true)
-            stateui_winui_send_keys(enter.key, enter.modifiers)
+            // WinUI raises a text box's KeyDown only from the keyboard; the test walks the submit the field's own
+            // Enter raises, as a search box's automation peer submits its query.
+            stateui_winui_text_submit_as_user(field.number)
         case (.choose(let place), let picker as WinUIPickerView):
             stateui_winui_picker_choose_as_user(picker.handle, Int32(place))
         case (.choose(let place), _) where element.type == .tabView: try chooseTab(place, of: element)
@@ -293,7 +300,21 @@ final class WinUIDriver: HostDriver {
             throw DriverCannot("read where \(element.type.name) stands")
         }
         let (corner, size) = (view.origin, view.laidOutFrame)
-        return Rect(x: corner.x, y: corner.y, width: size.width, height: size.height)
+        // WinUI reports a layout at the physical pixel grid, which at a fractional display scale leaves a DIP a
+        // fraction over: the tree's place is the DIP it stands at, rounded from 60.1043 and 140.2435.
+        let pixel = { (value: Double) in value.rounded() }
+        return Rect(
+            x: pixel(corner.x), y: pixel(corner.y),
+            width: pixel(size.width), height: pixel(size.height)
+        )
+    }
+
+    /// The element holding the keyboard under the page's tree, or nil where none does.
+    private func keyboardHolder() -> MountedElement? {
+        guard let root = renderer?.runtime.tree.root else { return nil }
+        return KeyPresses.holder(under: root) { held in
+            (held.native as? WinUIElement)?.view.map { stateui_winui_focused($0.handle) } ?? false
+        }
     }
 
     /// The window the host shows its page in.

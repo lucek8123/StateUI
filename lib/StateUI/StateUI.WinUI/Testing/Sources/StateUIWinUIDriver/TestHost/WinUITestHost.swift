@@ -114,6 +114,7 @@ extension WinUIRenderer {
     private static func replacing(clock: TestClock?, reducesMotion: Bool) -> WinUIRenderer {
         shared?.finish()
         WinUITestHost.window.show(nil)
+        WinUITestHost.window.forgetActivationForTesting()
 
         let renderer = WinUIRenderer(clock: clock.map { clock in { clock.now } }, reducesMotion: { reducesMotion })
         shared = renderer
