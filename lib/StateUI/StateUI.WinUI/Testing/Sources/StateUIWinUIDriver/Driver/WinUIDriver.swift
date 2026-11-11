@@ -301,8 +301,8 @@ final class WinUIDriver: HostDriver {
         }
         let (corner, size) = (view.origin, view.laidOutFrame)
         // WinUI reports a layout at the physical pixel grid, which at a fractional display scale leaves a DIP a
-        // fraction over: the tree's place is the DIP it stands at, rounded from 60.1043 and 140.2435.
-        let pixel = { (value: Double) in value.rounded() }
+        // fraction over: the tree's place is the DIP it stands at, rounded from 60.1043 and 140.2435, halves kept.
+        let pixel = { (value: Double) in (value * 2).rounded() / 2 }
         return Rect(
             x: pixel(corner.x), y: pixel(corner.y),
             width: pixel(size.width), height: pixel(size.height)

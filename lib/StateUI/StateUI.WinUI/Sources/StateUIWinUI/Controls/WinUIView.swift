@@ -345,9 +345,9 @@ class WinUIView {
     /// Where the view stands, in DIPs: its frame in its parent, its place in the window, and that place from
     /// `safeArea`, the safe area's top left in the window. WinUI reports a layout at the physical pixel grid, which
     /// at a fractional display scale leaves a DIP a fraction over - 60.1043 for a 60-DIP view. The tree's frame is
-    /// the DIP the layout stands at, so each number is rounded to the nearest DIP.
+    /// the DIP - halves kept - so each number is rounded to the nearest half DIP.
     func frameReport(safeArea: Point) -> [Double] {
-        let pixel = { (value: Double) in value.rounded() }
+        let pixel = { (value: Double) in (value * 2).rounded() / 2 }
         let place = placedFrame
         let corner = origin
         return MountedElement.frameNumbers(
